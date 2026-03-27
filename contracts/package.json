@@ -1,0 +1,22 @@
+{
+  "name": "devops-copilot-contracts",
+  "version": "1.0.0",
+  "description": "Polygon smart contracts for DevOps Co-Pilot credential verification and skill badges",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "deploy:local": "hardhat run scripts/deploy.ts --network hardhat",
+    "deploy:amoy": "hardhat run scripts/deploy.ts --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy.ts --network polygon",
+    "verify": "hardhat verify --network amoy",
+    "clean": "hardhat clean"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts-upgradeable": "^5.0.0",
+    "@openzeppelin/hardhat-upgrades": "^3.0.0",
+    "dotenv": "^16.4.0",
+    "hardhat": "^2.22.0"
+  }
+}

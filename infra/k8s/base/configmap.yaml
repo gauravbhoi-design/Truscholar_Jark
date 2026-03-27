@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: copilot-config
+  namespace: copilot-prod
+data:
+  ENVIRONMENT: "production"
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  CLAUDE_MODEL: "claude-sonnet-4-6"
+  MAX_BUDGET_USD: "10.0"
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_PER_HOUR: "500"
+  QDRANT_HOST: "qdrant"
+  QDRANT_PORT: "6333"
+  POSTGRES_PORT: "5432"
+  REDIS_URL: "redis://redis:6379/0"

@@ -1,0 +1,58 @@
+{
+  "name": "devops-copilot",
+  "displayName": "DevOps Co-Pilot",
+  "description": "AI-powered DevOps assistant integrated into VS Code",
+  "version": "1.0.0",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:devops-copilot.ask", "onCommand:devops-copilot.analyzeFile"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "devops-copilot.ask", "title": "DevOps Co-Pilot: Ask" },
+      { "command": "devops-copilot.analyzeFile", "title": "DevOps Co-Pilot: Analyze Current File" },
+      { "command": "devops-copilot.reviewPR", "title": "DevOps Co-Pilot: Review PR" },
+      { "command": "devops-copilot.debugDeployment", "title": "DevOps Co-Pilot: Debug Deployment" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devops-copilot",
+          "title": "DevOps Co-Pilot",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devops-copilot": [
+        { "type": "webview", "id": "devops-copilot.chat", "name": "Chat" }
+      ]
+    },
+    "configuration": {
+      "title": "DevOps Co-Pilot",
+      "properties": {
+        "devopsCopilot.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000/api/v1",
+          "description": "Backend API URL"
+        },
+        "devopsCopilot.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "API authentication token"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}
