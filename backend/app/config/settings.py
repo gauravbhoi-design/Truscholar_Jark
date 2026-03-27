@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = ["http://localhost:3000"]
+    cors_allow_all: bool = False  # Set true in production to allow Cloud Run origins
 
     # ─── Auth (GitHub OAuth) ──────────────────────────────────────────
     github_client_id: str = ""
@@ -41,6 +42,12 @@ class Settings(BaseSettings):
 
     @property
     def postgres_url(self) -> str:
+        # Cloud SQL uses Unix socket: POSTGRES_HOST=/cloudsql/project:region:instance
+        if self.postgres_host.startswith("/cloudsql/"):
+            return (
+                f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+                f"@/{self.postgres_db}?host={self.postgres_host}"
+            )
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -98,6 +105,33 @@ class Settings(BaseSettings):
 
     # ─── Credential Encryption ────────────────────────────────────────
     credentials_encryption_key: str = ""  # Base64-encoded 32-byte key for AES-256-GCM
+
+    # ─── Cloud Run ───────────────────────────────────────────────────────
+    cloud_run_url: str = ""  # Set automatically in Cloud Run (e.g., https://copilot-api-xxx.run.app)
+
+    @property
+    def effective_github_callback_url(self) -> str:
+        if self.cloud_run_url:
+            return f"{self.cloud_run_url}/api/v1/auth/github/callback"
+        return self.github_callback_url
+
+    @property
+    def effective_gcp_oauth_redirect_uri(self) -> str:
+        if self.cloud_run_url:
+            return f"{self.cloud_run_url}/api/v1/auth/gcp/callback"
+        return self.gcp_oauth_redirect_uri
+
+    @property
+    def effective_google_signin_redirect_uri(self) -> str:
+        if self.cloud_run_url:
+            return f"{self.cloud_run_url}/api/v1/auth/google/callback"
+        return self.google_signin_redirect_uri
+
+    @property
+    def effective_zoho_redirect_uri(self) -> str:
+        if self.cloud_run_url:
+            return f"{self.cloud_run_url}/api/v1/auth/zoho/callback"
+        return self.zoho_redirect_uri
 
     # ─── Rate Limiting ──────────────────────────────────────────────────
     rate_limit_per_minute: int = 60

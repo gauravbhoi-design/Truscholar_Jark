@@ -1,0 +1,179 @@
+name: Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: project-tai-aiinterviewer
+  GCP_REGION: us-central1
+  API_IMAGE: us-central1-docker.pkg.dev/project-tai-aiinterviewer/copilot/api
+  FRONTEND_IMAGE: us-central1-docker.pkg.dev/project-tai-aiinterviewer/copilot/frontend
+  API_SERVICE: copilot-api
+  FRONTEND_SERVICE: copilot-frontend
+
+jobs:
+  # ─── Build & Push Images ─────────────────────────────────────────────
+  build:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build & Push API
+        run: |
+          docker build -f infra/docker/Dockerfile.api \
+            -t ${{ env.API_IMAGE }}:${{ github.sha }} \
+            -t ${{ env.API_IMAGE }}:latest \
+            backend/
+          docker push ${{ env.API_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.API_IMAGE }}:latest
+
+      - name: Build & Push Frontend
+        run: |
+          docker build -f infra/docker/Dockerfile.frontend \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.API_URL }}/api/v1 \
+            -t ${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+            -t ${{ env.FRONTEND_IMAGE }}:latest \
+            frontend/
+          docker push ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.FRONTEND_IMAGE }}:latest
+
+  # ─── Deploy API to Cloud Run ────────────────────────────────────────
+  deploy-api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload Vertex AI SA key to Secret Manager
+        run: |
+          gcloud services enable secretmanager.googleapis.com --quiet
+          echo '${{ secrets.GCP_VERTEX_SA_KEY }}' > /tmp/vertex-sa.json
+          gcloud secrets create vertex-sa-key --replication-policy=automatic 2>/dev/null || true
+          gcloud secrets versions add vertex-sa-key --data-file=/tmp/vertex-sa.json
+          gcloud secrets add-iam-policy-binding vertex-sa-key \
+            --member="serviceAccount:claude-vscode-key@project-tai-aiinterviewer.iam.gserviceaccount.com" \
+            --role="roles/secretmanager.secretAccessor" --quiet 2>/dev/null || true
+          rm /tmp/vertex-sa.json
+
+      - name: Deploy API to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.API_SERVICE }} \
+            --image ${{ env.API_IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --port 8000 \
+            --memory 2Gi \
+            --cpu 2 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --timeout 300 \
+            --concurrency 80 \
+            --allow-unauthenticated \
+            --vpc-connector copilot-vpc \
+            --add-cloudsql-instances ${{ secrets.POSTGRES_CONNECTION_NAME }} \
+            --set-env-vars "\
+          ENVIRONMENT=production,\
+          DEBUG=false,\
+          USE_VERTEX_AI=true,\
+          CLAUDE_MODEL=claude-opus-4-6,\
+          MAX_BUDGET_USD=10.0,\
+          VERTEX_REGION=us-east5,\
+          GCP_PROJECT_ID=project-pallavi-tarke,\
+          GOOGLE_APPLICATION_CREDENTIALS=/secrets/vertex-sa-key,\
+          GCP_CREDENTIALS_PATH=/secrets/vertex-sa-key,\
+          POSTGRES_HOST=/cloudsql/${{ secrets.POSTGRES_CONNECTION_NAME }},\
+          POSTGRES_PORT=5432,\
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }},\
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }},\
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }},\
+          REDIS_URL=redis://${{ secrets.REDIS_HOST }}:${{ secrets.REDIS_PORT }}/0,\
+          CELERY_BROKER_URL=redis://${{ secrets.REDIS_HOST }}:${{ secrets.REDIS_PORT }}/1,\
+          CELERY_RESULT_BACKEND=redis://${{ secrets.REDIS_HOST }}:${{ secrets.REDIS_PORT }}/2,\
+          MONGODB_URL=${{ secrets.MONGODB_URL }},\
+          QDRANT_HOST=${{ secrets.QDRANT_HOST }},\
+          QDRANT_PORT=${{ secrets.QDRANT_PORT }},\
+          GITHUB_CLIENT_ID=${{ secrets.APP_GITHUB_CLIENT_ID }},\
+          GITHUB_CLIENT_SECRET=${{ secrets.APP_GITHUB_CLIENT_SECRET }},\
+          GITHUB_TOKEN=${{ secrets.APP_GITHUB_TOKEN }},\
+          GITHUB_CALLBACK_URL=${{ secrets.API_URL }}/api/v1/auth/github/callback,\
+          GITHUB_CONNECT_CALLBACK_URL=${{ secrets.API_URL }}/api/v1/auth/github/connect/callback,\
+          JWT_SECRET=${{ secrets.JWT_SECRET }},\
+          GCP_OAUTH_CLIENT_ID=${{ secrets.GCP_OAUTH_CLIENT_ID }},\
+          GCP_OAUTH_CLIENT_SECRET=${{ secrets.GCP_OAUTH_CLIENT_SECRET }},\
+          GCP_OAUTH_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/gcp/callback,\
+          GOOGLE_SIGNIN_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/google/callback,\
+          CREDENTIALS_ENCRYPTION_KEY=${{ secrets.CREDENTIALS_ENCRYPTION_KEY }},\
+          ZOHO_CLIENT_ID=${{ secrets.ZOHO_CLIENT_ID }},\
+          ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }},\
+          ZOHO_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/zoho/callback" \
+            --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest" \
+            --service-account claude-vscode-key@project-tai-aiinterviewer.iam.gserviceaccount.com
+
+      - name: Get API URL
+        id: api-url
+        run: |
+          URL=$(gcloud run services describe ${{ env.API_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)')
+          echo "api_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "::notice::API deployed at: $URL"
+          echo "::notice::Health check: $URL/health"
+    outputs:
+      api_url: ${{ steps.api-url.outputs.api_url }}
+
+  # ─── Deploy Frontend to Cloud Run ───────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [build, deploy-api]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Frontend to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
+            --image ${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --port 3000 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 5 \
+            --timeout 60 \
+            --allow-unauthenticated \
+            --set-env-vars "NEXT_PUBLIC_API_URL=${{ needs.deploy-api.outputs.api_url }}/api/v1,NEXT_PUBLIC_WS_URL=${{ needs.deploy-api.outputs.api_url }}"
+
+      - name: Get Frontend URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.FRONTEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)')
+          echo "::notice::Frontend deployed at: $URL"

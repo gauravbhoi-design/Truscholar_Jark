@@ -13,14 +13,18 @@ RUN pip install --no-cache-dir -e ".[dev]" 2>/dev/null || pip install --no-cache
 
 # Copy source
 COPY app/ ./app/
+# Copy migrations if they exist
+COPY alembic* ./
 
 # Non-root user
 RUN useradd -m -s /bin/bash appuser
 USER appuser
 
+# Cloud Run sets PORT env var; default to 8000 for local
+ENV PORT=8000
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4

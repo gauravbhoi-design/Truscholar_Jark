@@ -41,9 +41,11 @@ app = FastAPI(
 
 # ─── Middleware ──────────────────────────────────────────────────────────────
 
+# In production (Cloud Run), allow all origins since frontend URL is dynamic
+cors_origins = ["*"] if settings.environment == "production" else settings.cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
