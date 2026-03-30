@@ -58,7 +58,8 @@ jobs:
             echo "Creating Cloud SQL instance (this takes ~5 min)..."
             gcloud sql instances create ${{ env.DB_INSTANCE }} \
               --database-version=POSTGRES_16 \
-              --tier=db-f1-micro \
+              --edition=ENTERPRISE \
+              --tier=db-g1-small \
               --region=${{ env.GCP_REGION }} \
               --storage-size=10GB \
               --storage-auto-increase \
