@@ -51,7 +51,7 @@ class MemoryService:
                 .order_by(desc(Conversation.updated_at))
                 .limit(3)
             )
-            conv_ids = [c.id for c in convos.scalars()]
+            conv_ids = list(convos.scalars())
             if not conv_ids:
                 return []
 

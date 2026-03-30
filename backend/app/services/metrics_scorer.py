@@ -47,52 +47,62 @@ class MetricsScorer:
     # ─── DORA Tier Classification ──────────────────────────────────────
 
     @staticmethod
+    def _get_float(d: dict, key: str) -> float:
+        """Safely extract a float from a constants dict."""
+        return float(d[key])  # type: ignore[arg-type]
+
+    @staticmethod
     def classify_deployment_frequency(deploys_per_day: float) -> Tier:
-        if deploys_per_day >= DORA_DEPLOYMENT_FREQUENCY[Tier.ELITE]["min"]:
+        _f = MetricsScorer._get_float
+        if deploys_per_day >= _f(DORA_DEPLOYMENT_FREQUENCY[Tier.ELITE], "min"):
             return Tier.ELITE
-        elif deploys_per_day >= DORA_DEPLOYMENT_FREQUENCY[Tier.HIGH]["min"]:
+        elif deploys_per_day >= _f(DORA_DEPLOYMENT_FREQUENCY[Tier.HIGH], "min"):
             return Tier.HIGH
-        elif deploys_per_day >= DORA_DEPLOYMENT_FREQUENCY[Tier.MEDIUM]["min"]:
+        elif deploys_per_day >= _f(DORA_DEPLOYMENT_FREQUENCY[Tier.MEDIUM], "min"):
             return Tier.MEDIUM
         return Tier.LOW
 
     @staticmethod
     def classify_lead_time(hours: float) -> Tier:
-        if hours <= DORA_LEAD_TIME[Tier.ELITE]["max_hours"]:
+        _f = MetricsScorer._get_float
+        if hours <= _f(DORA_LEAD_TIME[Tier.ELITE], "max_hours"):
             return Tier.ELITE
-        elif hours <= DORA_LEAD_TIME[Tier.HIGH]["max_hours"]:
+        elif hours <= _f(DORA_LEAD_TIME[Tier.HIGH], "max_hours"):
             return Tier.HIGH
-        elif hours <= DORA_LEAD_TIME[Tier.MEDIUM]["max_hours"]:
+        elif hours <= _f(DORA_LEAD_TIME[Tier.MEDIUM], "max_hours"):
             return Tier.MEDIUM
         return Tier.LOW
 
     @staticmethod
     def classify_change_failure_rate(pct: float) -> Tier:
-        if pct <= DORA_CHANGE_FAILURE_RATE[Tier.ELITE]["max_pct"]:
+        _f = MetricsScorer._get_float
+        if pct <= _f(DORA_CHANGE_FAILURE_RATE[Tier.ELITE], "max_pct"):
             return Tier.ELITE
-        elif pct <= DORA_CHANGE_FAILURE_RATE[Tier.HIGH]["max_pct"]:
+        elif pct <= _f(DORA_CHANGE_FAILURE_RATE[Tier.HIGH], "max_pct"):
             return Tier.HIGH
-        elif pct <= DORA_CHANGE_FAILURE_RATE[Tier.MEDIUM]["max_pct"]:
+        elif pct <= _f(DORA_CHANGE_FAILURE_RATE[Tier.MEDIUM], "max_pct"):
             return Tier.MEDIUM
         return Tier.LOW
 
     @staticmethod
     def classify_recovery_time(hours: float) -> Tier:
-        if hours <= DORA_RECOVERY_TIME[Tier.ELITE]["max_hours"]:
+        _f = MetricsScorer._get_float
+        if hours <= _f(DORA_RECOVERY_TIME[Tier.ELITE], "max_hours"):
             return Tier.ELITE
-        elif hours <= DORA_RECOVERY_TIME[Tier.HIGH]["max_hours"]:
+        elif hours <= _f(DORA_RECOVERY_TIME[Tier.HIGH], "max_hours"):
             return Tier.HIGH
-        elif hours <= DORA_RECOVERY_TIME[Tier.MEDIUM]["max_hours"]:
+        elif hours <= _f(DORA_RECOVERY_TIME[Tier.MEDIUM], "max_hours"):
             return Tier.MEDIUM
         return Tier.LOW
 
     @staticmethod
     def classify_rework_rate(pct: float) -> Tier:
-        if pct <= DORA_REWORK_RATE[Tier.ELITE]["max_pct"]:
+        _f = MetricsScorer._get_float
+        if pct <= _f(DORA_REWORK_RATE[Tier.ELITE], "max_pct"):
             return Tier.ELITE
-        elif pct <= DORA_REWORK_RATE[Tier.HIGH]["max_pct"]:
+        elif pct <= _f(DORA_REWORK_RATE[Tier.HIGH], "max_pct"):
             return Tier.HIGH
-        elif pct <= DORA_REWORK_RATE[Tier.MEDIUM]["max_pct"]:
+        elif pct <= _f(DORA_REWORK_RATE[Tier.MEDIUM], "max_pct"):
             return Tier.MEDIUM
         return Tier.LOW
 
@@ -140,31 +150,31 @@ class MetricsScorer:
             deployment_frequency=DORAMetricDetail(
                 value=df_value,
                 tier=df_tier,
-                label=DORA_DEPLOYMENT_FREQUENCY[df_tier]["label"],
-                industry_percentile=DORA_DEPLOYMENT_FREQUENCY[df_tier].get("industry_pct"),
+                label=str(DORA_DEPLOYMENT_FREQUENCY[df_tier]["label"]),
+                industry_percentile=MetricsScorer._get_float(DORA_DEPLOYMENT_FREQUENCY[df_tier], "industry_pct"),
             ),
             lead_time=DORAMetricDetail(
                 value=lt_value,
                 tier=lt_tier,
-                label=DORA_LEAD_TIME[lt_tier]["label"],
-                industry_percentile=DORA_LEAD_TIME[lt_tier].get("industry_pct"),
+                label=str(DORA_LEAD_TIME[lt_tier]["label"]),
+                industry_percentile=MetricsScorer._get_float(DORA_LEAD_TIME[lt_tier], "industry_pct"),
             ),
             change_failure_rate=DORAMetricDetail(
                 value=cfr_value,
                 tier=cfr_tier,
-                label=DORA_CHANGE_FAILURE_RATE[cfr_tier]["label"],
-                industry_percentile=DORA_CHANGE_FAILURE_RATE[cfr_tier].get("industry_pct"),
+                label=str(DORA_CHANGE_FAILURE_RATE[cfr_tier]["label"]),
+                industry_percentile=MetricsScorer._get_float(DORA_CHANGE_FAILURE_RATE[cfr_tier], "industry_pct"),
             ),
             recovery_time=DORAMetricDetail(
                 value=rt_value,
                 tier=rt_tier,
-                label=DORA_RECOVERY_TIME[rt_tier]["label"],
-                industry_percentile=DORA_RECOVERY_TIME[rt_tier].get("industry_pct"),
+                label=str(DORA_RECOVERY_TIME[rt_tier]["label"]),
+                industry_percentile=MetricsScorer._get_float(DORA_RECOVERY_TIME[rt_tier], "industry_pct"),
             ),
             rework_rate=DORAMetricDetail(
                 value=rr_value,
                 tier=rr_tier,
-                label=DORA_REWORK_RATE[rr_tier]["label"],
+                label=str(DORA_REWORK_RATE[rr_tier]["label"]),
             ),
             lead_time_breakdown=lead_time_breakdown,
             overall_score=round(overall_score, 1),
@@ -390,9 +400,9 @@ class MetricsScorer:
 
             capabilities.append(AICapabilityScore(
                 capability_id=cap_id,
-                name=cap_info["name"],
+                name=str(cap_info["name"]),
                 maturity_level=level,
-                maturity_label=cap_info["maturity_levels"][level],
+                maturity_label=str(cap_info["maturity_levels"][level]),  # type: ignore[index]
             ))
 
         avg_maturity = sum(c.maturity_level for c in capabilities) / max(len(capabilities), 1)

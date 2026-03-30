@@ -41,7 +41,7 @@ def _create_client() -> anthropic.AsyncAnthropic:
             region=settings.vertex_region,
             model=settings.claude_model,
         )
-        return AsyncAnthropicVertex(
+        return AsyncAnthropicVertex(  # type: ignore[return-value]
             project_id=settings.gcp_project_id,
             region=settings.vertex_region,
         )

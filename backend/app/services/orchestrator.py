@@ -60,9 +60,9 @@ class AgentOrchestrator:
         # Load GCP credentials
         try:
             from app.api.gcp_oauth import get_user_gcp_access_token
-            result = await get_user_gcp_access_token(user_id, self.db)
-            if result:
-                access_token, project_id = result
+            gcp_result = await get_user_gcp_access_token(user_id, self.db)
+            if gcp_result:
+                access_token, project_id = gcp_result
                 enriched["gcp_access_token"] = access_token
                 enriched["gcp_project_id"] = project_id
                 logger.info("GCP credentials loaded", user=user_id, project=project_id)
@@ -159,7 +159,7 @@ class AgentOrchestrator:
                         },
                         importance=7 if any(kw in query.lower() for kw in ["error", "fix", "critical", "deploy"]) else 5,
                     )
-                    await self.db.commit()
+                    await self.db.commit()  # type: ignore[union-attr]
                 except Exception as e:
                     logger.debug("Failed to save memory", error=str(e))
 
@@ -278,7 +278,7 @@ class AgentOrchestrator:
                     metadata={"agents": agents_used, "cost": total_cost},
                     importance=7 if any(kw in query.lower() for kw in ["error", "fix", "critical", "deploy"]) else 5,
                 )
-                await self.db.commit()
+                await self.db.commit()  # type: ignore[union-attr]
             except Exception:
                 pass
 
@@ -309,8 +309,8 @@ class AgentOrchestrator:
         # Route to agents
         routing = await self.supervisor.classify_and_route(query, context)
 
-        all_steps = []
-        agents_used = []
+        all_steps: list[dict] = []
+        agents_used: list[str] = []
         total_cost = 0.0
         summaries = []
 

@@ -126,15 +126,15 @@ Output format:
                 time_to=tool_input.get("time_to", "now"),
             )
         elif tool_name == "get_datadog_metrics":
-            client = DatadogMCPClient()
-            return await client.query_metrics(
+            dd_client = DatadogMCPClient()
+            return await dd_client.query_metrics(
                 metric=tool_input["metric"],
                 service=tool_input.get("service"),
                 duration=tool_input.get("duration", "1h"),
             )
         elif tool_name == "analyze_apm_traces":
-            client = DatadogMCPClient()
-            return await client.get_traces(
+            dd_client = DatadogMCPClient()
+            return await dd_client.get_traces(
                 service=tool_input["service"],
                 min_duration_ms=tool_input.get("min_duration_ms", 1000),
                 limit=tool_input.get("limit", 10),

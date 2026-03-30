@@ -240,9 +240,9 @@ async def approve_plan(
         step_result = await db.execute(
             select(PlanStep).where(PlanStep.id == request.step_id, PlanStep.plan_id == plan.id)
         )
-        step = step_result.scalar_one_or_none()
-        if step:
-            step.status = "approved"
+        approve_step = step_result.scalar_one_or_none()
+        if approve_step:
+            approve_step.status = "approved"
             await db.commit()
         return {"status": "step_approved", "step_id": str(request.step_id)}
 
@@ -250,9 +250,9 @@ async def approve_plan(
         step_result = await db.execute(
             select(PlanStep).where(PlanStep.id == request.step_id, PlanStep.plan_id == plan.id)
         )
-        step = step_result.scalar_one_or_none()
-        if step:
-            step.status = "skipped"
+        skip_step = step_result.scalar_one_or_none()
+        if skip_step:
+            skip_step.status = "skipped"
             await db.commit()
         return {"status": "step_skipped", "step_id": str(request.step_id)}
 

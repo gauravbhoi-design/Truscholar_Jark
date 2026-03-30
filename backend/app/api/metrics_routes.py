@@ -56,10 +56,10 @@ async def _enrich_user(user: dict, db: AsyncSession) -> dict:
     if not enriched.get("gcp_access_token"):
         try:
             from app.api.gcp_oauth import get_user_gcp_access_token
-            result = await get_user_gcp_access_token(user_id, db)
-            if result:
-                enriched["gcp_access_token"] = result[0]
-                enriched["gcp_project_id"] = result[1]
+            gcp_result = await get_user_gcp_access_token(user_id, db)
+            if gcp_result:
+                enriched["gcp_access_token"] = gcp_result[0]
+                enriched["gcp_project_id"] = gcp_result[1]
         except Exception as e:
             logger.debug("No GCP credentials", error=str(e))
 

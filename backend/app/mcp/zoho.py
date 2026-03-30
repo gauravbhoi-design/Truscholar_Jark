@@ -136,7 +136,7 @@ class ZohoSprintsMCPClient:
 
         items = data.get("items", data.get("sprintItems", []))
         formatted = []
-        status_counts = {}
+        status_counts: dict[str, int] = {}
 
         for item in items:
             status = item.get("status", {}).get("name", "Unknown")

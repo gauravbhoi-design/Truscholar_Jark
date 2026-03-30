@@ -266,7 +266,7 @@ class MetricsCollector:
                 if run.get("conclusion") == "failure" and not in_failure:
                     in_failure = True
                     failure_start = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
-                elif run.get("conclusion") == "success" and in_failure:
+                elif run.get("conclusion") == "success" and in_failure and failure_start:
                     recovery_end = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
                     recovery_hours = (recovery_end - failure_start).total_seconds() / 3600
                     recovery_times.append(recovery_hours)

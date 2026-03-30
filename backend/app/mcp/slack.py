@@ -22,7 +22,7 @@ class SlackMCPClient:
 
     async def send_message(self, channel: str, text: str, blocks: list | None = None) -> dict:
         """Send a message to a Slack channel."""
-        payload = {"channel": channel, "text": text}
+        payload: dict = {"channel": channel, "text": text}
         if blocks:
             payload["blocks"] = blocks
 

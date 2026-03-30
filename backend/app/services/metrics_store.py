@@ -372,7 +372,7 @@ class MetricsStore:
             if layer:
                 conditions.append(FieldCondition(key="layer", match=MatchValue(value=layer)))
 
-            search_filter = Filter(must=conditions) if conditions else None
+            search_filter = Filter(must=conditions) if conditions else None  # type: ignore[arg-type]
 
             results = await qdrant.search(
                 collection_name=METRICS_COLLECTION,
