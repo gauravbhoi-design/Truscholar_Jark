@@ -20,6 +20,8 @@ def _get_key() -> bytes:
             "CREDENTIALS_ENCRYPTION_KEY is not set. "
             "Generate one with: python -c \"import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())\""
         )
+    # Fix missing base64 padding (env vars sometimes strip trailing '=')
+    key_b64 += "=" * (-len(key_b64) % 4)
     return base64.urlsafe_b64decode(key_b64)
 
 
