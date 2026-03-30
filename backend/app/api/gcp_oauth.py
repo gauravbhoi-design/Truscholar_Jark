@@ -86,7 +86,7 @@ async def gcp_callback(
         # Exchange authorization code for tokens
         redirect_uri = settings.effective_gcp_oauth_redirect_uri
         logger.info("GCP token exchange", redirect_uri=redirect_uri)
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             token_response = await client.post(
                 GOOGLE_TOKEN_URL,
                 data={
@@ -98,42 +98,43 @@ async def gcp_callback(
                 },
             )
 
-        if token_response.status_code != 200:
-            logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text)
-            raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+            if token_response.status_code != 200:
+                logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text)
+                raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
 
-        tokens = token_response.json()
-        access_token = tokens.get("access_token")
-        refresh_token = tokens.get("refresh_token")
-        granted_scopes = tokens.get("scope", "")
+            tokens = token_response.json()
+            access_token = tokens.get("access_token")
+            refresh_token = tokens.get("refresh_token")
+            granted_scopes = tokens.get("scope", "")
 
-        if not refresh_token:
-            raise HTTPException(
-                status_code=400,
-                detail="No refresh token received. Please try again — Google may not have returned offline access.",
-            )
+            if not refresh_token:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No refresh token received. Please try again — Google may not have returned offline access.",
+                )
 
-        # Get user's Google profile
-        async with httpx.AsyncClient() as client:
+            # Get user's Google profile
             userinfo_resp = await client.get(
                 GOOGLE_USERINFO_URL,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
-        google_user = userinfo_resp.json() if userinfo_resp.status_code == 200 else {}
+            google_user = userinfo_resp.json() if userinfo_resp.status_code == 200 else {}
 
-        # List user's GCP projects to let them pick one
-        projects = []
-        async with httpx.AsyncClient() as client:
-            projects_resp = await client.get(
-                GOOGLE_PROJECTS_URL,
-                headers={"Authorization": f"Bearer {access_token}"},
-                params={"filter": "lifecycleState:ACTIVE"},
-            )
-        if projects_resp.status_code == 200:
-            projects = [
-                {"id": p["projectId"], "name": p.get("name", p["projectId"])}
-                for p in projects_resp.json().get("projects", [])
-            ]
+            # List user's GCP projects (non-fatal if it fails)
+            projects = []
+            try:
+                projects_resp = await client.get(
+                    GOOGLE_PROJECTS_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"filter": "lifecycleState:ACTIVE"},
+                )
+                if projects_resp.status_code == 200:
+                    projects = [
+                        {"id": p["projectId"], "name": p.get("name", p["projectId"])}
+                        for p in projects_resp.json().get("projects", [])
+                    ]
+            except Exception as e:
+                logger.warning("Failed to list GCP projects", error=str(e))
 
         # Encrypt and store the refresh token
         encrypted_token = encrypt(refresh_token)
