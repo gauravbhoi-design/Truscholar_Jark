@@ -99,8 +99,8 @@ async def gcp_callback(
             )
 
             if token_response.status_code != 200:
-                logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text)
-                raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+                logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text, redirect_uri=redirect_uri)
+                raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_response.text}")
 
             tokens = token_response.json()
             access_token = tokens.get("access_token")
