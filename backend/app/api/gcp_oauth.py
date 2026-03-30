@@ -1,10 +1,9 @@
 """GCP OAuth2 endpoints — Lets users connect their own GCP project securely."""
 
-import secrets
-
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,17 +27,23 @@ GOOGLE_PROJECTS_URL = "https://cloudresourcemanager.googleapis.com/v1/projects"
 @router.get("/login")
 async def gcp_login(user: dict = Depends(get_current_user)):
     """Generate GCP OAuth2 authorization URL for the user."""
+    import json
+
+    from app.utils.encryption import encrypt as enc
+
     if not settings.gcp_oauth_client_id:
         raise HTTPException(
             status_code=503,
             detail="GCP OAuth is not configured. Set GCP_OAUTH_CLIENT_ID and GCP_OAUTH_CLIENT_SECRET.",
         )
 
-    state = secrets.token_urlsafe(32)
+    # Encode user_id in state so callback can identify the user (browser redirect has no JWT)
+    user_id = user.get("sub", user.get("login", ""))
+    state = enc(json.dumps({"user_id": user_id, "flow": "gcp_connect"}))
 
     params = {
         "client_id": settings.gcp_oauth_client_id,
-        "redirect_uri": settings.gcp_oauth_redirect_uri,
+        "redirect_uri": settings.effective_gcp_oauth_redirect_uri,
         "response_type": "code",
         "scope": settings.gcp_oauth_scopes,
         "access_type": "offline",  # Get refresh_token
@@ -57,12 +62,22 @@ async def gcp_login(user: dict = Depends(get_current_user)):
 async def gcp_callback(
     code: str,
     state: str = "",
-    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Handle GCP OAuth2 callback — exchange code for tokens and store securely."""
+    import json
+
+    from app.utils.encryption import decrypt
+
     if not settings.gcp_oauth_client_id:
         raise HTTPException(status_code=503, detail="GCP OAuth not configured")
+
+    # Decode user from encrypted state (browser redirect has no JWT)
+    try:
+        state_data = json.loads(decrypt(state))
+        user_id = state_data["user_id"]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     # Exchange authorization code for tokens
     async with httpx.AsyncClient() as client:
@@ -72,7 +87,7 @@ async def gcp_callback(
                 "code": code,
                 "client_id": settings.gcp_oauth_client_id,
                 "client_secret": settings.gcp_oauth_client_secret,
-                "redirect_uri": settings.gcp_oauth_redirect_uri,
+                "redirect_uri": settings.effective_gcp_oauth_redirect_uri,
                 "grant_type": "authorization_code",
             },
         )
@@ -115,7 +130,6 @@ async def gcp_callback(
         ]
 
     # Encrypt and store the refresh token
-    user_id = user.get("sub", user.get("login", ""))
     encrypted_token = encrypt(refresh_token)
 
     # Upsert — update if exists, insert if not
@@ -151,16 +165,9 @@ async def gcp_callback(
 
     logger.info("GCP connected", user=user_id, email=google_user.get("email"), projects=len(projects))
 
-    # Return info for the frontend
+    # Redirect browser back to frontend
     frontend_url = settings.effective_frontend_url
-    return {
-        "status": "connected",
-        "email": google_user.get("email"),
-        "projects": projects,
-        "selected_project": cred.project_id,
-        "scopes": granted_scopes,
-        "redirect_url": f"{frontend_url}/?gcp=connected",
-    }
+    return RedirectResponse(url=f"{frontend_url}/?gcp=connected")
 
 
 @router.get("/status")
