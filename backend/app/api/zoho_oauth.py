@@ -135,7 +135,7 @@ async def zoho_callback(
     await db.commit()
     logger.info("Zoho connected", user=user_id, email=zoho_email)
 
-    frontend_url = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
+    frontend_url = settings.effective_frontend_url
     return RedirectResponse(url=f"{frontend_url}/?zoho=connected")
 
 

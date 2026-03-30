@@ -152,7 +152,7 @@ async def gcp_callback(
     logger.info("GCP connected", user=user_id, email=google_user.get("email"), projects=len(projects))
 
     # Return info for the frontend
-    frontend_url = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
+    frontend_url = settings.effective_frontend_url
     return {
         "status": "connected",
         "email": google_user.get("email"),

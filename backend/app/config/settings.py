@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = ["http://localhost:3000"]
     cors_allow_all: bool = False  # Set true in production to allow Cloud Run origins
+    frontend_url: str = ""  # Production frontend URL; falls back to cors_origins[0]
 
     # ─── Auth (GitHub OAuth) ──────────────────────────────────────────
     github_client_id: str = ""
@@ -109,6 +110,13 @@ class Settings(BaseSettings):
 
     # ─── Cloud Run ───────────────────────────────────────────────────────
     cloud_run_url: str = ""  # Set automatically in Cloud Run (e.g., https://copilot-api-xxx.run.app)
+
+    @property
+    def effective_frontend_url(self) -> str:
+        """Resolve frontend URL for OAuth redirects."""
+        if self.frontend_url:
+            return self.frontend_url.rstrip("/")
+        return self.cors_origins[0] if self.cors_origins else "http://localhost:3000"
 
     @property
     def effective_github_callback_url(self) -> str:

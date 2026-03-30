@@ -188,6 +188,12 @@ jobs:
           DB_IP=$(gcloud sql instances describe ${{ env.DB_INSTANCE }} --format='value(ipAddresses[0].ipAddress)')
           echo "ip=$DB_IP" >> "$GITHUB_OUTPUT"
 
+      - name: Get Frontend URL
+        id: frontend
+        run: |
+          URL=$(gcloud run services describe ${{ env.FRONTEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)' 2>/dev/null || echo "")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
       - name: Deploy API
         run: |
           gcloud run deploy ${{ env.API_SERVICE }} \
@@ -204,6 +210,8 @@ jobs:
             --allow-unauthenticated \
             --add-cloudsql-instances ${{ needs.setup-infra.outputs.db_connection_name }} \
             --set-env-vars "\
+          FRONTEND_URL=${{ steps.frontend.outputs.url }},\
+          CORS_ORIGINS=[\"${{ steps.frontend.outputs.url }}\"],\
           ENVIRONMENT=production,\
           DEBUG=false,\
           CORS_ALLOW_ALL=true,\

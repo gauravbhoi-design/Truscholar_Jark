@@ -61,7 +61,7 @@ async def github_callback(
     If state contains encrypted user data → this is a "connect" flow (link GitHub to existing account).
     Otherwise → this is a normal sign-in flow (create JWT).
     """
-    frontend_url = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
+    frontend_url = settings.effective_frontend_url
 
     try:
         # 1. Exchange authorization code for GitHub access token
@@ -594,7 +594,7 @@ async def google_callback(
                 logger.warning("Failed to store GCP credentials during sign-in", error=str(e))
 
         # 5. Redirect to frontend
-        frontend_url = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
+        frontend_url = settings.effective_frontend_url
         redirect_url = f"{frontend_url}/?token={jwt_token}"
 
         return RedirectResponse(url=redirect_url)
