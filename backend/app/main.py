@@ -42,15 +42,22 @@ app = FastAPI(
 
 # ─── Middleware ──────────────────────────────────────────────────────────────
 
-# In production (Cloud Run), allow all origins since frontend URL is dynamic
-cors_origins = ["*"] if settings.environment == "production" else settings.cors_origins
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if settings.cors_allow_all:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ─── Prometheus Metrics ─────────────────────────────────────────────────────
 
