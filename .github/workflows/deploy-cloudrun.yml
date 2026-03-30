@@ -221,8 +221,7 @@ jobs:
           GCP_PROJECT_ID=project-pallavi-tarke,\
           GOOGLE_APPLICATION_CREDENTIALS=/secrets/vertex-sa-key,\
           GCP_CREDENTIALS_PATH=/secrets/vertex-sa-key,\
-          POSTGRES_HOST=${{ steps.db.outputs.ip }},\
-          POSTGRES_PORT=5432,\
+          POSTGRES_HOST=/cloudsql/${{ needs.setup-infra.outputs.db_connection_name }},\
           POSTGRES_USER=${{ env.DB_USER }},\
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }},\
           POSTGRES_DB=${{ env.DB_NAME }},\

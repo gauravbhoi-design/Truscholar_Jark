@@ -175,11 +175,8 @@ async def gcp_callback(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        pg_host = settings.postgres_host
-        logger.error("GCP callback failed", error=str(e), user=user_id, pg_host=pg_host, traceback=tb)
-        raise HTTPException(status_code=500, detail=f"GCP connection failed: {str(e)} | pg_host={pg_host} | trace: {tb[-500:]}")
+        logger.error("GCP callback failed", error=str(e), user=user_id)
+        raise HTTPException(status_code=500, detail=f"GCP connection failed: {str(e)}")
 
 
 @router.get("/status")
