@@ -189,6 +189,19 @@ Always output structured analysis with:
                     "required": ["project_id"],
                 },
             },
+            {
+                "name": "run_command",
+                "description": "Execute a CLI command for diagnostics (gcloud, docker, kubectl, curl, git, etc.). Use this to check live service status, inspect containers, or run cloud CLI commands.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "Shell command to execute"},
+                        "cwd": {"type": "string", "description": "Working directory (optional)"},
+                        "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)", "default": 30},
+                    },
+                    "required": ["command"],
+                },
+            },
         ]
 
     def _get_gcp_client(self):
@@ -280,6 +293,15 @@ Always output structured analysis with:
                 project_id=tool_input.get("project_id", ""),
                 filter_query=filter_query,
                 hours_back=tool_input.get("hours_back", 24),
+            )
+
+        elif tool_name == "run_command":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.execute(
+                command=tool_input["command"],
+                cwd=tool_input.get("cwd"),
+                timeout=min(tool_input.get("timeout", 30), 120),
             )
 
         return {"error": f"Unknown tool: {tool_name}"}

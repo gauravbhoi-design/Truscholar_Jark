@@ -90,6 +90,19 @@ Output format:
                     "required": ["service"],
                 },
             },
+            {
+                "name": "run_command",
+                "description": "Execute a CLI command for performance diagnostics (top, df, free, docker stats, curl for latency checks, etc.)",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "Shell command to execute"},
+                        "cwd": {"type": "string", "description": "Working directory (optional)"},
+                        "timeout": {"type": "integer", "default": 30},
+                    },
+                    "required": ["command"],
+                },
+            },
         ]
 
     async def _execute_tool(self, tool_name: str, tool_input: dict):
@@ -124,6 +137,15 @@ Output format:
                 service=tool_input["service"],
                 min_duration_ms=tool_input.get("min_duration_ms", 1000),
                 limit=tool_input.get("limit", 10),
+            )
+
+        elif tool_name == "run_command":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.execute(
+                command=tool_input["command"],
+                cwd=tool_input.get("cwd"),
+                timeout=min(tool_input.get("timeout", 30), 120),
             )
 
         return {"error": f"Unknown tool: {tool_name}"}

@@ -97,6 +97,55 @@ Output format:
                     "required": ["content"],
                 },
             },
+            {
+                "name": "run_command",
+                "description": "Execute a CLI command (git, docker, kubectl, gcloud, terraform, npm, python, etc.). Use this to check service status, run diagnostics, inspect configs, or verify deployments.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "Shell command to execute (e.g., 'docker ps', 'kubectl get pods', 'git log --oneline -5')"},
+                        "cwd": {"type": "string", "description": "Working directory (optional)"},
+                        "timeout": {"type": "integer", "description": "Timeout in seconds (default 30, max 120)", "default": 30},
+                    },
+                    "required": ["command"],
+                },
+            },
+            {
+                "name": "docker_logs",
+                "description": "Get logs from a specific Docker container. Shows recent output for debugging.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "container": {"type": "string", "description": "Container name or ID (e.g., 'copilot-api', 'postgres')"},
+                        "lines": {"type": "integer", "description": "Number of recent lines to show", "default": 100},
+                        "since": {"type": "string", "description": "Show logs since (e.g., '10m', '1h', '2h')"},
+                    },
+                    "required": ["container"],
+                },
+            },
+            {
+                "name": "docker_exec",
+                "description": "Execute a command INSIDE a running Docker container. Use this to inspect container internals, check config files, test connectivity, or run diagnostics.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "container": {"type": "string", "description": "Container name or ID"},
+                        "command": {"type": "string", "description": "Command to run inside the container (e.g., 'cat /etc/nginx/nginx.conf', 'psql -c \"SELECT 1\"', 'env')"},
+                    },
+                    "required": ["container", "command"],
+                },
+            },
+            {
+                "name": "docker_stats",
+                "description": "Get CPU, memory, network, and I/O stats for Docker containers.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "container": {"type": "string", "description": "Container name (optional — shows all if empty)"},
+                    },
+                    "required": [],
+                },
+            },
         ]
 
     async def _execute_tool(self, tool_name: str, tool_input: dict):
@@ -127,6 +176,39 @@ Output format:
 
         elif tool_name == "validate_terraform":
             return self._validate_terraform(tool_input["content"])
+
+        elif tool_name == "run_command":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.execute(
+                command=tool_input["command"],
+                cwd=tool_input.get("cwd"),
+                timeout=min(tool_input.get("timeout", 30), 120),
+            )
+
+        elif tool_name == "docker_logs":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.docker_logs(
+                container=tool_input["container"],
+                lines=tool_input.get("lines", 100),
+                since=tool_input.get("since"),
+            )
+
+        elif tool_name == "docker_exec":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.docker_exec(
+                container=tool_input["container"],
+                command=tool_input["command"],
+            )
+
+        elif tool_name == "docker_stats":
+            from app.mcp.terminal import TerminalMCPClient
+            terminal = TerminalMCPClient()
+            return await terminal.docker_stats(
+                container=tool_input.get("container"),
+            )
 
         return {"error": f"Unknown tool: {tool_name}"}
 
