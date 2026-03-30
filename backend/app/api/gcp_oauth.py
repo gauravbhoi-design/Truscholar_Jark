@@ -175,8 +175,10 @@ async def gcp_callback(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("GCP callback failed", error=str(e), user=user_id)
-        raise HTTPException(status_code=500, detail=f"GCP connection failed: {str(e)}")
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("GCP callback failed", error=str(e), user=user_id, traceback=tb)
+        raise HTTPException(status_code=500, detail=f"GCP connection failed: {str(e)} | trace: {tb[-500:]}")
 
 
 @router.get("/status")

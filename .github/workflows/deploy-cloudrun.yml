@@ -211,7 +211,6 @@ jobs:
             --add-cloudsql-instances ${{ needs.setup-infra.outputs.db_connection_name }} \
             --set-env-vars "\
           FRONTEND_URL=${{ steps.frontend.outputs.url }},\
-          CORS_ORIGINS=[\"${{ steps.frontend.outputs.url }}\"],\
           ENVIRONMENT=production,\
           DEBUG=false,\
           CORS_ALLOW_ALL=true,\
