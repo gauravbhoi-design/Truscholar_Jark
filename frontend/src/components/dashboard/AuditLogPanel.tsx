@@ -21,7 +21,7 @@ export function AuditLogPanel() {
     async function fetchLogs() {
       try {
         const data = await getAuditLogs(50);
-        setLogs(data as AuditEntry[]);
+        setLogs(data as unknown as AuditEntry[]);
       } catch {
         // API may not be running
       } finally {
