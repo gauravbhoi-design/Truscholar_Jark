@@ -96,8 +96,7 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/cloud-platform.read-only "
         "https://www.googleapis.com/auth/logging.read "
         "https://www.googleapis.com/auth/monitoring.read "
-        "https://www.googleapis.com/auth/compute.readonly "
-        "https://www.googleapis.com/auth/container.readonly"
+        "https://www.googleapis.com/auth/compute.readonly"
     )
 
     # ─── Zoho OAuth2 ────────────────────────────────────────────────
