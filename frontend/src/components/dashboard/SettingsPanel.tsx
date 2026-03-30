@@ -369,7 +369,7 @@ function GitHubConnectionCard() {
       const res = await fetch(`${API_URL}/auth/github/pat`, {
         method: "POST",
         headers: getAuthHeader(),
-        body: JSON.stringify({ token: pat.trim() }),
+        body: JSON.stringify({ token: btoa(pat.trim()) }),
       });
       if (res.ok) {
         const data = await res.json();

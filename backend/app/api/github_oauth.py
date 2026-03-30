@@ -165,10 +165,16 @@ async def save_github_pat(
 
     Validates the token by calling GitHub API, then stores it encrypted.
     """
+    import base64
+
     body = await request.json()
-    pat = body.get("token", "").strip()
-    if not pat:
+    raw_token = body.get("token", "").strip()
+    if not raw_token:
         raise HTTPException(status_code=400, detail="Token is required")
+    try:
+        pat = base64.b64decode(raw_token).decode("utf-8")
+    except Exception:
+        pat = raw_token  # fallback if not base64-encoded
 
     # Validate the token by calling GitHub
     async with httpx.AsyncClient() as client:
