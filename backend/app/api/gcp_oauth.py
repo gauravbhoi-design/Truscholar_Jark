@@ -67,107 +67,115 @@ async def gcp_callback(
     """Handle GCP OAuth2 callback — exchange code for tokens and store securely."""
     import json
 
-    from app.utils.encryption import decrypt
+    from app.utils.encryption import decrypt as dec
+
+    frontend_url = settings.effective_frontend_url
 
     if not settings.gcp_oauth_client_id:
         raise HTTPException(status_code=503, detail="GCP OAuth not configured")
 
     # Decode user from encrypted state (browser redirect has no JWT)
     try:
-        state_data = json.loads(decrypt(state))
+        state_data = json.loads(dec(state))
         user_id = state_data["user_id"]
-    except Exception:
+    except Exception as e:
+        logger.error("GCP callback state decrypt failed", error=str(e), state_len=len(state))
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
-    # Exchange authorization code for tokens
-    async with httpx.AsyncClient() as client:
-        token_response = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "code": code,
-                "client_id": settings.gcp_oauth_client_id,
-                "client_secret": settings.gcp_oauth_client_secret,
-                "redirect_uri": settings.effective_gcp_oauth_redirect_uri,
-                "grant_type": "authorization_code",
-            },
+    try:
+        # Exchange authorization code for tokens
+        redirect_uri = settings.effective_gcp_oauth_redirect_uri
+        logger.info("GCP token exchange", redirect_uri=redirect_uri)
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": settings.gcp_oauth_client_id,
+                    "client_secret": settings.gcp_oauth_client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+
+        if token_response.status_code != 200:
+            logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text)
+            raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+
+        tokens = token_response.json()
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
+        granted_scopes = tokens.get("scope", "")
+
+        if not refresh_token:
+            raise HTTPException(
+                status_code=400,
+                detail="No refresh token received. Please try again — Google may not have returned offline access.",
+            )
+
+        # Get user's Google profile
+        async with httpx.AsyncClient() as client:
+            userinfo_resp = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        google_user = userinfo_resp.json() if userinfo_resp.status_code == 200 else {}
+
+        # List user's GCP projects to let them pick one
+        projects = []
+        async with httpx.AsyncClient() as client:
+            projects_resp = await client.get(
+                GOOGLE_PROJECTS_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"filter": "lifecycleState:ACTIVE"},
+            )
+        if projects_resp.status_code == 200:
+            projects = [
+                {"id": p["projectId"], "name": p.get("name", p["projectId"])}
+                for p in projects_resp.json().get("projects", [])
+            ]
+
+        # Encrypt and store the refresh token
+        encrypted_token = encrypt(refresh_token)
+
+        # Upsert — update if exists, insert if not
+        existing = await db.execute(
+            select(CloudCredential).where(
+                CloudCredential.user_id == user_id,
+                CloudCredential.provider == "gcp",
+            )
         )
+        cred = existing.scalar_one_or_none()
 
-    if token_response.status_code != 200:
-        logger.error("GCP token exchange failed", status=token_response.status_code, body=token_response.text)
-        raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+        if cred:
+            cred.encrypted_refresh_token = encrypted_token
+            cred.email = google_user.get("email")
+            cred.scopes = granted_scopes
+            cred.is_active = True
+            if not cred.project_id and projects:
+                cred.project_id = projects[0]["id"]
+        else:
+            cred = CloudCredential(
+                user_id=user_id,
+                provider="gcp",
+                project_id=projects[0]["id"] if projects else None,
+                email=google_user.get("email"),
+                encrypted_refresh_token=encrypted_token,
+                scopes=granted_scopes,
+                is_active=True,
+            )
+            db.add(cred)
 
-    tokens = token_response.json()
-    access_token = tokens.get("access_token")
-    refresh_token = tokens.get("refresh_token")
-    granted_scopes = tokens.get("scope", "")
+        await db.commit()
 
-    if not refresh_token:
-        raise HTTPException(
-            status_code=400,
-            detail="No refresh token received. Please try again — Google may not have returned offline access.",
-        )
+        logger.info("GCP connected", user=user_id, email=google_user.get("email"), projects=len(projects))
+        return RedirectResponse(url=f"{frontend_url}/?gcp=connected")
 
-    # Get user's Google profile
-    async with httpx.AsyncClient() as client:
-        userinfo_resp = await client.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-    google_user = userinfo_resp.json() if userinfo_resp.status_code == 200 else {}
-
-    # List user's GCP projects to let them pick one
-    projects = []
-    async with httpx.AsyncClient() as client:
-        projects_resp = await client.get(
-            GOOGLE_PROJECTS_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={"filter": "lifecycleState:ACTIVE"},
-        )
-    if projects_resp.status_code == 200:
-        projects = [
-            {"id": p["projectId"], "name": p.get("name", p["projectId"])}
-            for p in projects_resp.json().get("projects", [])
-        ]
-
-    # Encrypt and store the refresh token
-    encrypted_token = encrypt(refresh_token)
-
-    # Upsert — update if exists, insert if not
-    existing = await db.execute(
-        select(CloudCredential).where(
-            CloudCredential.user_id == user_id,
-            CloudCredential.provider == "gcp",
-        )
-    )
-    cred = existing.scalar_one_or_none()
-
-    if cred:
-        cred.encrypted_refresh_token = encrypted_token
-        cred.email = google_user.get("email")
-        cred.scopes = granted_scopes
-        cred.is_active = True
-        # Set project to first available if not already set
-        if not cred.project_id and projects:
-            cred.project_id = projects[0]["id"]
-    else:
-        cred = CloudCredential(
-            user_id=user_id,
-            provider="gcp",
-            project_id=projects[0]["id"] if projects else None,
-            email=google_user.get("email"),
-            encrypted_refresh_token=encrypted_token,
-            scopes=granted_scopes,
-            is_active=True,
-        )
-        db.add(cred)
-
-    await db.commit()
-
-    logger.info("GCP connected", user=user_id, email=google_user.get("email"), projects=len(projects))
-
-    # Redirect browser back to frontend
-    frontend_url = settings.effective_frontend_url
-    return RedirectResponse(url=f"{frontend_url}/?gcp=connected")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("GCP callback failed", error=str(e), user=user_id)
+        raise HTTPException(status_code=500, detail=f"GCP connection failed: {str(e)}")
 
 
 @router.get("/status")
