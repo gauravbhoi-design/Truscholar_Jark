@@ -70,6 +70,24 @@ jobs:
             echo "Instance created!"
           fi
 
+      - name: Ensure Cloud SQL instance is running
+        run: |
+          STATUS=$(gcloud sql instances describe ${{ env.DB_INSTANCE }} --format='value(state)' 2>/dev/null || echo "UNKNOWN")
+          echo "Instance status: $STATUS"
+          if [ "$STATUS" = "SUSPENDED" ] || [ "$STATUS" = "STOPPED" ]; then
+            echo "Starting instance..."
+            gcloud sql instances patch ${{ env.DB_INSTANCE }} --activation-policy=ALWAYS --quiet
+            echo "Waiting for instance to start..."
+            sleep 30
+          fi
+          # Wait until RUNNABLE
+          for i in $(seq 1 20); do
+            STATUS=$(gcloud sql instances describe ${{ env.DB_INSTANCE }} --format='value(state)')
+            echo "  Status: $STATUS (attempt $i/20)"
+            if [ "$STATUS" = "RUNNABLE" ]; then break; fi
+            sleep 15
+          done
+
       - name: Setup database and user
         run: |
           # Create database
