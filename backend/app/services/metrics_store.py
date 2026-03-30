@@ -5,18 +5,17 @@ Ensures engineering metrics data is never lost across sessions.
 - Qdrant: Vector embeddings for semantic search by AI agents.
 """
 
+import hashlib
 import json
 import uuid
-import hashlib
-import structlog
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
-from sqlalchemy import select, desc, and_
+import structlog
+from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.database import MetricSnapshot, MetricDataPoint
+from app.models.database import MetricDataPoint, MetricSnapshot
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -123,7 +122,7 @@ class MetricsStore:
 
         This is the primary persistence method — call after every metrics computation.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Save to PostgreSQL
         snapshot = MetricSnapshot(
@@ -194,7 +193,7 @@ class MetricsStore:
             unit=unit,
             source=source,
             source_metadata=source_metadata,
-            recorded_at=datetime.now(timezone.utc),
+            recorded_at=datetime.now(UTC),
         )
         self.db.add(point)
         await self.db.flush()
@@ -322,7 +321,7 @@ class MetricsStore:
         days: int = 30,
     ) -> list[dict]:
         """Get individual data points for a specific metric over time."""
-        since = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)
+        since = datetime.now(UTC) - __import__("datetime").timedelta(days=days)
         result = await self.db.execute(
             select(MetricDataPoint)
             .where(
@@ -362,7 +361,7 @@ class MetricsStore:
             return await self._search_postgres_fallback(query, team_id, layer, limit)
 
         try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
 
             embedding = self._generate_embedding(query)
 

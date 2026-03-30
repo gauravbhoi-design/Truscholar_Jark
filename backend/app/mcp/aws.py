@@ -1,7 +1,8 @@
 """AWS MCP Client — CloudWatch, ECS, S3, Lambda integration via boto3."""
 
+from datetime import UTC, datetime, timedelta
+
 import structlog
-from datetime import datetime, timedelta, timezone
 
 logger = structlog.get_logger()
 
@@ -11,6 +12,7 @@ class AWSMCPClient:
 
     def __init__(self):
         import boto3
+
         from app.config import get_settings
         settings = get_settings()
         self.session = boto3.Session(
@@ -27,8 +29,8 @@ class AWSMCPClient:
 
         def _query():
             client = self.session.client("logs")
-            end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
-            start_time = int((datetime.now(timezone.utc) - timedelta(hours=hours_back)).timestamp() * 1000)
+            end_time = int(datetime.now(UTC).timestamp() * 1000)
+            start_time = int((datetime.now(UTC) - timedelta(hours=hours_back)).timestamp() * 1000)
 
             params = {
                 "logGroupName": log_group,
@@ -48,7 +50,7 @@ class AWSMCPClient:
                     "events": [
                         {
                             "timestamp": datetime.fromtimestamp(
-                                e["timestamp"] / 1000, tz=timezone.utc
+                                e["timestamp"] / 1000, tz=UTC
                             ).isoformat(),
                             "message": e["message"][:500],
                             "log_stream": e.get("logStreamName", ""),
@@ -94,7 +96,7 @@ class AWSMCPClient:
         def _get():
             client = self.session.client("cloudwatch")
             results = {}
-            end_time = datetime.now(timezone.utc)
+            end_time = datetime.now(UTC)
             start_time = end_time - timedelta(hours=1)
 
             for metric in metric_names:

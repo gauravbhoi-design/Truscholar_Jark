@@ -8,16 +8,15 @@ Three memory layers:
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
 
 import structlog
-from sqlalchemy import select, desc, and_, or_, func
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import (
-    Message,
-    Conversation,
     AgentMemory,
+    Conversation,
+    Message,
     UserPreference,
 )
 

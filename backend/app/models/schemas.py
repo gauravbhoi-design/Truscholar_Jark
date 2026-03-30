@@ -4,7 +4,6 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
 # ─── Enums ──────────────────────────────────────────────────────────────────
 
 class UserRole(str, Enum):

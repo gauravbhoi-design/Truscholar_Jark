@@ -2,6 +2,7 @@
 
 import httpx
 import structlog
+
 from app.config import get_settings
 
 logger = structlog.get_logger()
@@ -45,9 +46,6 @@ class SlackMCPClient:
         agent: str,
     ) -> dict:
         """Send a formatted alert notification."""
-        color_map = {"critical": "#FF0000", "high": "#FF6600", "medium": "#FFCC00", "low": "#00CC00"}
-        color = color_map.get(severity.lower(), "#808080")
-
         blocks = [
             {
                 "type": "header",

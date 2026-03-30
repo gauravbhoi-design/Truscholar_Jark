@@ -11,6 +11,7 @@ and no access to modify secrets or credentials.
 
 import asyncio
 import shlex
+
 import structlog
 
 logger = structlog.get_logger()
@@ -150,7 +151,7 @@ class TerminalMCPClient:
                 "truncated": len(stdout) > MAX_OUTPUT_LENGTH or len(stderr) > MAX_OUTPUT_LENGTH,
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "error": f"Command timed out after {effective_timeout}s",
                 "exit_code": -1,

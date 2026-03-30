@@ -5,6 +5,8 @@ Supports two modes:
 2. Per-user OAuth credentials — for accessing USER's GCP project
 """
 
+from datetime import UTC
+
 import structlog
 
 logger = structlog.get_logger()
@@ -53,7 +55,7 @@ class GCPMCPClient:
     ) -> dict:
         """Query GCP Cloud Logging."""
         import asyncio
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         # Use the project_id from the tool call, or fall back to configured one
         target_project = project_id or self._project_id
@@ -61,7 +63,7 @@ class GCPMCPClient:
         def _query():
             try:
                 client = self._get_logging_client()
-                end_time = datetime.now(timezone.utc)
+                end_time = datetime.now(UTC)
                 start_time = end_time - timedelta(hours=hours_back)
 
                 full_filter = (
@@ -105,14 +107,15 @@ class GCPMCPClient:
 
         def _get():
             try:
+                from datetime import datetime, timedelta
+
                 from google.cloud import monitoring_v3
                 from google.protobuf.timestamp_pb2 import Timestamp
-                from datetime import datetime, timedelta, timezone
 
                 client = self._get_monitoring_client()
                 project_name = f"projects/{self._project_id}"
 
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 results = {}
 
                 for metric in metric_names:
@@ -393,20 +396,21 @@ class GCPMCPClient:
         Polls every 2 seconds for new log entries.
         """
         import asyncio
+        from datetime import datetime, timedelta
+
         import httpx
-        from datetime import datetime, timedelta, timezone
 
         target = project_id or self._project_id
         if not self._user_token:
             yield {"error": "User GCP token required"}
             return
 
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         end_time = start_time + timedelta(seconds=duration_seconds)
         seen_ids = set()
         poll_from = start_time - timedelta(seconds=5)
 
-        while datetime.now(timezone.utc) < end_time:
+        while datetime.now(UTC) < end_time:
             try:
                 full_filter = f'timestamp>="{poll_from.isoformat()}"'
                 if filter_query:
@@ -414,7 +418,7 @@ class GCPMCPClient:
 
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.post(
-                        f"https://logging.googleapis.com/v2/entries:list",
+                        "https://logging.googleapis.com/v2/entries:list",
                         headers={"Authorization": f"Bearer {self._user_token}"},
                         json={
                             "resourceNames": [f"projects/{target}"],

@@ -1,17 +1,18 @@
 """Zoho OAuth2 endpoints — Connect user's Zoho Sprints account."""
 
-import structlog
+from urllib.parse import urlencode
+
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from urllib.parse import urlencode
 
 from app.api.auth import get_current_user
 from app.config import get_settings
 from app.models.database import CloudCredential, get_db
-from app.utils.encryption import encrypt, decrypt
+from app.utils.encryption import decrypt, encrypt
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -28,8 +29,9 @@ async def zoho_login(user: dict = Depends(get_current_user)):
     if not settings.zoho_client_id:
         raise HTTPException(status_code=503, detail="Zoho OAuth not configured. Set ZOHO_CLIENT_ID.")
 
-    from app.utils.encryption import encrypt as enc
     import json
+
+    from app.utils.encryption import encrypt as enc
 
     user_id = user.get("sub", user.get("login", ""))
     state = enc(json.dumps({"user_id": user_id, "flow": "zoho_connect"}))

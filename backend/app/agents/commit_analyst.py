@@ -1,6 +1,7 @@
 """Commit Analyst Agent — Analyzes git history, diffs, and identifies regressions."""
 
 import structlog
+
 from app.agents.base import BaseAgent
 
 logger = structlog.get_logger()

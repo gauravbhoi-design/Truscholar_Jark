@@ -1,24 +1,32 @@
 """Agent Orchestrator — Supervisor that routes queries to specialized agents."""
 
-import uuid
 import time
-import structlog
-from typing import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.models.database import CloudCredential
-from app.models.schemas import AgentResponse, AgentStatus, AgentName, PlanResponse, PlanStatus, PlanStepStatus, PlanStepSchema
-from app.services.memory import MemoryService
-from app.agents.supervisor import SupervisorAgent
 from app.agents.cloud_debugger import CloudDebuggerAgent
 from app.agents.codebase_analyzer import CodebaseAnalyzerAgent
 from app.agents.commit_analyst import CommitAnalystAgent
 from app.agents.deployment_doctor import DeploymentDoctorAgent
-from app.agents.performance import PerformanceAgent
 from app.agents.engineering_metrics import EngineeringMetricsAgent
+from app.agents.performance import PerformanceAgent
+from app.agents.supervisor import SupervisorAgent
+from app.config import get_settings
+from app.models.database import CloudCredential
+from app.models.schemas import (
+    AgentName,
+    AgentResponse,
+    AgentStatus,
+    PlanResponse,
+    PlanStatus,
+    PlanStepSchema,
+    PlanStepStatus,
+)
+from app.services.memory import MemoryService
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -398,8 +406,9 @@ class AgentOrchestrator:
         if not self.db:
             return {"error": "Database required for plan execution"}
 
-        from app.models.database import Plan, PlanStep
         from datetime import datetime
+
+        from app.models.database import Plan, PlanStep
 
         # Load the plan
         plan_result = await self.db.execute(select(Plan).where(Plan.id == plan_id))

@@ -1,4 +1,4 @@
-from .database import Base, get_db, engine
+from .database import Base, engine, get_db
 from .schemas import (
     AgentRequest,
     AgentResponse,

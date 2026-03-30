@@ -1,20 +1,20 @@
 """OAuth endpoints — GitHub and Google sign-in, token refresh, user profile."""
 
+import secrets
+from urllib.parse import urlencode
+
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
-from urllib.parse import urlencode
-import secrets
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import (
     build_github_authorize_url,
+    create_jwt_token,
     exchange_code_for_token,
     fetch_github_user,
-    create_jwt_token,
     get_current_user,
 )
 from app.config import get_settings
@@ -74,8 +74,9 @@ async def github_callback(
         # 2. Check if this is a "connect" flow (link to existing account)
         connect_user_id = None
         try:
-            from app.utils.encryption import decrypt as decrypt_text
             import json
+
+            from app.utils.encryption import decrypt as decrypt_text
             state_data = json.loads(decrypt_text(state))
             if state_data.get("flow") == "connect":
                 connect_user_id = state_data["user_id"]
@@ -346,8 +347,9 @@ async def github_connect_start(user: dict = Depends(get_current_user)):
     Encodes the user's identity in the state parameter so the callback
     can identify the user without requiring auth headers (browser redirect).
     """
-    from app.utils.encryption import encrypt
     import json
+
+    from app.utils.encryption import encrypt
 
     user_id = user.get("sub", user.get("login", ""))
 
@@ -531,9 +533,10 @@ async def google_callback(
         # 4. If we got a refresh_token, store encrypted GCP credentials
         if refresh_token:
             try:
-                from app.utils.encryption import encrypt
-                from app.models.database import CloudCredential, async_session
                 from sqlalchemy import select
+
+                from app.models.database import CloudCredential, async_session
+                from app.utils.encryption import encrypt
 
                 encrypted_token = encrypt(refresh_token)
 

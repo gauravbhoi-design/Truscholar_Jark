@@ -1,6 +1,7 @@
 """Codebase Analyzer Agent — Static analysis, vulnerability scanning, code quality."""
 
 import structlog
+
 from app.agents.base import BaseAgent
 
 logger = structlog.get_logger()

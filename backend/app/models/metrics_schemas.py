@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from app.models.metrics_constants import OverallTier, Tier
 
-
 # ─── Enums ─────────────────────────────────────────────────────────────────
 
 

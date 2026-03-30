@@ -2,8 +2,9 @@
 
 import asyncio
 import json
-import tempfile
 import subprocess
+import tempfile
+
 import structlog
 
 logger = structlog.get_logger()

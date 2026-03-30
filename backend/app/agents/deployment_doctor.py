@@ -1,6 +1,7 @@
 """Deployment Doctor Agent — Validates Docker, K8s, Terraform configs and CI/CD pipelines."""
 
 import structlog
+
 from app.agents.base import BaseAgent
 
 logger = structlog.get_logger()
@@ -150,8 +151,8 @@ Output format:
 
     async def _execute_tool(self, tool_name: str, tool_input: dict):
         """Dispatch to Docker, K8s, and CI/CD tools."""
-        from app.mcp.kubernetes import KubernetesMCPClient
         from app.mcp.github import GitHubMCPClient
+        from app.mcp.kubernetes import KubernetesMCPClient
 
         if tool_name == "validate_dockerfile":
             return self._validate_dockerfile(tool_input["content"])
@@ -230,7 +231,7 @@ Output format:
             if stripped.startswith("ENV") and any(kw in stripped.lower() for kw in ["password", "secret", "key", "token"]):
                 issues.append({"line": i, "severity": "critical", "message": "Secrets in ENV — use build args or secrets mount"})
 
-        has_user = any("USER" in l and "root" not in l for l in lines)
+        has_user = any("USER" in line and "root" not in line for line in lines)
         if not has_user:
             issues.append({"line": 0, "severity": "medium", "message": "No non-root USER directive found"})
 

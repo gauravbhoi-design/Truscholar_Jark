@@ -1,8 +1,9 @@
 """PreToolUse safety hooks — Gates for destructive operations requiring approval."""
 
 import uuid
-import structlog
 from datetime import datetime
+
+import structlog
 
 from app.config import get_settings
 

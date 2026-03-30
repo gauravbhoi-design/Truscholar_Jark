@@ -1,11 +1,10 @@
 """WebSocket endpoint for real-time agent streaming."""
 
 import json
-import structlog
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.database import get_db
+import structlog
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
 from app.services.orchestrator import AgentOrchestrator
 
 logger = structlog.get_logger()
@@ -24,7 +23,7 @@ async def agent_websocket(websocket: WebSocket):
 
             query = payload.get("query", "")
             conversation_id = payload.get("conversation_id")
-            token = payload.get("token", "dev_local")
+            _token = payload.get("token", "dev_local")  # noqa: F841 — reserved for JWT validation
 
             # Simple auth for WS (in production, validate JWT before accept)
             user = {"sub": "ws|user", "email": "ws@user", "name": "WS User", "role": "engineer"}

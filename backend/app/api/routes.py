@@ -2,22 +2,22 @@
 
 import json
 import uuid
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user, require_role
-from app.api.github_oauth import router as github_oauth_router
 from app.api.gcp_oauth import router as gcp_oauth_router
-from app.api.zoho_oauth import router as zoho_oauth_router
+from app.api.github_oauth import router as github_oauth_router
 from app.api.metrics_routes import router as metrics_router
+from app.api.zoho_oauth import router as zoho_oauth_router
 from app.config import get_settings
 from app.models.database import get_db
 from app.models.schemas import (
     AgentRequest,
     AgentResponse,
-    AgentStatus,
     ConversationCreate,
     ConversationResponse,
     PlanApprovalRequest,
@@ -213,6 +213,7 @@ async def approve_plan(
 ):
     """Approve, reject, or modify a plan."""
     from sqlalchemy import select
+
     from app.models.database import Plan, PlanStep
 
     plan_result = await db.execute(select(Plan).where(Plan.id == request.plan_id))
@@ -282,6 +283,7 @@ async def list_plans(
 ):
     """List recent plans for the current user."""
     from sqlalchemy import select
+
     from app.models.database import Plan
 
     user_id = user.get("sub", user.get("login", ""))
@@ -321,6 +323,7 @@ async def list_conversations(
 ):
     """List conversations for the current user."""
     from sqlalchemy import select
+
     from app.models.database import Conversation
 
     result = await db.execute(
@@ -340,6 +343,7 @@ async def get_messages(
 ):
     """Get messages for a conversation."""
     from sqlalchemy import select
+
     from app.models.database import Message
 
     result = await db.execute(
@@ -414,6 +418,7 @@ async def get_audit_logs(
 ):
     """Get agent audit logs."""
     from sqlalchemy import select
+
     from app.models.database import AgentAuditLog
 
     result = await db.execute(
@@ -431,8 +436,9 @@ async def get_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get platform usage stats."""
-    from sqlalchemy import select, func
-    from app.models.database import Conversation, User, AgentAuditLog
+    from sqlalchemy import func, select
+
+    from app.models.database import AgentAuditLog, Conversation, User
 
     users_count = await db.scalar(select(func.count(User.id)))
     conversations_count = await db.scalar(select(func.count(Conversation.id)))

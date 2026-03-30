@@ -1,6 +1,7 @@
 """Performance Agent — Monitors metrics, identifies bottlenecks, resource optimization."""
 
 import structlog
+
 from app.agents.base import BaseAgent
 
 logger = structlog.get_logger()
@@ -107,8 +108,8 @@ Output format:
 
     async def _execute_tool(self, tool_name: str, tool_input: dict):
         """Dispatch to monitoring tools."""
-        from app.mcp.prometheus import PrometheusMCPClient
         from app.mcp.datadog import DatadogMCPClient
+        from app.mcp.prometheus import PrometheusMCPClient
 
         if tool_name == "query_prometheus":
             client = PrometheusMCPClient()

@@ -1,15 +1,15 @@
 """API routes for Engineering Metrics & Performance Standards dashboard."""
 
 import uuid
+from datetime import UTC, datetime
+
 import structlog
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user, require_role
 from app.models.database import CloudCredential, Team, get_db
-from app.models.schemas import UserRole
 from app.models.metrics_schemas import (
     AICapabilitiesResponse,
     CompositeScoreResponse,
@@ -20,8 +20,8 @@ from app.models.metrics_schemas import (
     SPACEMetricsResponse,
     SurveySubmission,
     SurveySubmissionResponse,
-    TrendsResponse,
 )
+from app.models.schemas import UserRole
 from app.services.metrics_collector import MetricsCollector
 from app.services.metrics_scorer import MetricsScorer
 
@@ -104,7 +104,7 @@ async def get_dora_metrics(
     return DORAMetricsResponse(
         metrics=dora,
         period_days=days,
-        collected_at=datetime.now(timezone.utc),
+        collected_at=datetime.now(UTC),
         radar_chart_data=radar_data,
     )
 
@@ -138,7 +138,7 @@ async def get_space_metrics(
     return SPACEMetricsResponse(
         metrics=space,
         period_days=days,
-        collected_at=datetime.now(timezone.utc),
+        collected_at=datetime.now(UTC),
         radar_chart_data=radar_data,
     )
 
@@ -169,7 +169,7 @@ async def get_dx_core4(
     return DXCore4Response(
         scores=dx_core4,
         period="monthly",
-        collected_at=datetime.now(timezone.utc),
+        collected_at=datetime.now(UTC),
     )
 
 
@@ -189,6 +189,7 @@ async def get_ai_capabilities(
     assessment_data = {}
     if team_id and db:
         from sqlalchemy import select
+
         from app.models.database import SurveyResponse
 
         try:
@@ -222,7 +223,7 @@ async def get_ai_capabilities(
     return AICapabilitiesResponse(
         assessment=ai_cap,
         team_id=team_id,
-        assessed_at=datetime.now(timezone.utc),
+        assessed_at=datetime.now(UTC),
         heatmap_data=heatmap_data,
     )
 
@@ -262,7 +263,7 @@ async def get_composite_score(
     return CompositeScoreResponse(
         score=composite,
         period="monthly",
-        computed_at=datetime.now(timezone.utc),
+        computed_at=datetime.now(UTC),
         tier_breakdown={
             "dora": {"score": dora.overall_score, "elite_count": dora.elite_count},
             "space": {"score": space.overall_score},
@@ -301,7 +302,7 @@ async def get_recommendations(
     return RecommendationsResponse(
         recommendations=recs,
         lowest_scoring_area=recs[0].area if recs else "N/A",
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
     )
 
 
@@ -441,7 +442,7 @@ async def get_metrics_dashboard(
         dx_core4=dx_core4,
         ai_capabilities=ai_cap,
         top_recommendations=recs[:3],
-        last_updated=datetime.now(timezone.utc),
+        last_updated=datetime.now(UTC),
     )
 
 
@@ -505,8 +506,8 @@ async def get_stored_dashboard(
     Returns cached data from PostgreSQL + Qdrant. Fast and free.
     Use /dashboard to fetch fresh data (which also auto-stores).
     """
-    from app.services.metrics_store import MetricsStore
     from app.models.database import Team
+    from app.services.metrics_store import MetricsStore
 
     slug = repo.replace("/", "-").lower()
     result = await db.execute(select(Team).where(Team.slug == slug))
@@ -599,6 +600,7 @@ async def list_teams(
 ):
     """List all teams."""
     from sqlalchemy import select
+
     from app.models.database import Team
 
     result = await db.execute(select(Team).order_by(Team.name))

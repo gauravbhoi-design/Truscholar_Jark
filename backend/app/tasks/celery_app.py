@@ -1,6 +1,7 @@
 """Celery app configuration for async agent task processing."""
 
 from celery import Celery
+
 from app.config import get_settings
 
 settings = get_settings()

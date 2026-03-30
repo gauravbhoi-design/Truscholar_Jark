@@ -1,9 +1,9 @@
 """Redis service for caching, rate limiting, and pub/sub."""
 
+import json
+
 import redis.asyncio as redis
 import structlog
-import json
-from datetime import timedelta
 
 logger = structlog.get_logger()
 

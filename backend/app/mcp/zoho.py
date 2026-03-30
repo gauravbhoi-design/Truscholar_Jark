@@ -1,7 +1,8 @@
 """Zoho Sprints MCP Client — Sprint boards, tasks, and project management integration."""
 
-import structlog
 import httpx
+import structlog
+
 from app.config import get_settings
 
 logger = structlog.get_logger()

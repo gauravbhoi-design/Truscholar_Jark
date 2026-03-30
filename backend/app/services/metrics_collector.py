@@ -3,8 +3,9 @@
 Feeds data into the scoring engine for DORA, SPACE, DX Core 4, and AI Capabilities computation.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import structlog
-from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
 
@@ -38,7 +39,7 @@ class MetricsCollector:
         client = self._get_github_client()
         if not client:
             return {"deploy_count": 0, "deploys_per_day": 0, "error": "No GitHub token available. Connect GitHub in Settings."}
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             runs_data = await client._request(
@@ -95,7 +96,7 @@ class MetricsCollector:
         client = self._get_github_client()
         if not client:
             return {"avg_lead_time_hours": 0, "error": "No GitHub token available"}
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             # Get merged PRs in the period
@@ -189,7 +190,7 @@ class MetricsCollector:
             )
             all_runs = runs_data.get("workflow_runs", [])
 
-            since = datetime.now(timezone.utc) - timedelta(days=days)
+            since = datetime.now(UTC) - timedelta(days=days)
             period_runs = [
                 r for r in all_runs
                 if r.get("head_branch") in ("main", "master")
@@ -247,7 +248,7 @@ class MetricsCollector:
                 params={"per_page": 100},
             )
 
-            since = datetime.now(timezone.utc) - timedelta(days=days)
+            since = datetime.now(UTC) - timedelta(days=days)
             runs = sorted(
                 [
                     r for r in runs_data.get("workflow_runs", [])
@@ -294,7 +295,7 @@ class MetricsCollector:
         client = self._get_github_client()
         if not client:
             return {"rework_rate_pct": 0, "error": "No GitHub token available"}
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             prs_data = await client._request(
@@ -346,7 +347,7 @@ class MetricsCollector:
         client = self._get_github_client()
         if not client:
             return {"error": "No GitHub token available"}
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             # Commit frequency
@@ -407,7 +408,7 @@ class MetricsCollector:
         client = self._get_github_client()
         if not client:
             return {"error": "No GitHub token available"}
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             prs_data = await client._request(
@@ -481,7 +482,7 @@ class MetricsCollector:
                 params={"per_page": 100},
             )
 
-            since = datetime.now(timezone.utc) - timedelta(days=days)
+            since = datetime.now(UTC) - timedelta(days=days)
             runs = [
                 r for r in runs_data.get("workflow_runs", [])
                 if datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= since
@@ -566,7 +567,7 @@ class MetricsCollector:
             "rework_rate": rework,
             "repo": repo,
             "period_days": days,
-            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "collected_at": datetime.now(UTC).isoformat(),
         }
 
     async def collect_all_space_automated(self, repo: str, days: int = 7) -> dict:

@@ -1,8 +1,9 @@
 """GCP OAuth2 endpoints — Lets users connect their own GCP project securely."""
 
 import secrets
-import structlog
+
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user
 from app.config import get_settings
 from app.models.database import CloudCredential, get_db
-from app.utils.encryption import encrypt, decrypt
+from app.utils.encryption import decrypt, encrypt
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -46,7 +47,6 @@ async def gcp_login(user: dict = Depends(get_current_user)):
         "include_granted_scopes": "true",
     }
 
-    query = "&".join(f"{k}={httpx.URL('', params={k: v}).params}" for k, v in params.items())
     # Use httpx to properly encode
     url = httpx.URL(GOOGLE_AUTH_URL, params=params)
 
@@ -333,7 +333,7 @@ async def get_user_gcp_access_token(user_id: str, db: AsyncSession) -> tuple[str
         return None
 
     # Update last_used_at (naive datetime to match DB column)
-    from datetime import datetime, timezone
+    from datetime import datetime
     cred.last_used_at = datetime.utcnow()
     await db.commit()
 

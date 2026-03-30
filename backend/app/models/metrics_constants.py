@@ -6,7 +6,6 @@ Document Version 1.0 | March 2026
 
 from enum import Enum
 
-
 # ─── Tier Definitions ──────────────────────────────────────────────────────
 
 

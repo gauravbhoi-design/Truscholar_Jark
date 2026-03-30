@@ -1,12 +1,13 @@
-import structlog
 from contextlib import asynccontextmanager
+
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
-from app.config import get_settings
 from app.api.routes import router as api_router
 from app.api.websocket import router as ws_router
+from app.config import get_settings
 from app.services.redis_service import RedisService
 
 logger = structlog.get_logger()

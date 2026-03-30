@@ -3,10 +3,11 @@
 Implements the TruScholar Scoring & Comparison Model (Section 12).
 """
 
+
 import structlog
-from datetime import datetime, timezone
 
 from app.models.metrics_constants import (
+    AI_CAPABILITIES,
     COMPOSITE_WEIGHTS,
     DORA_CHANGE_FAILURE_RATE,
     DORA_DEPLOYMENT_FREQUENCY,
@@ -16,10 +17,9 @@ from app.models.metrics_constants import (
     DX_BUSINESS_IMPACT_WEIGHTS,
     DX_QUALITY_WEIGHTS,
     DX_SPEED_WEIGHTS,
-    AI_CAPABILITIES,
+    TIER_SCORE_MAP,
     OverallTier,
     Tier,
-    TIER_SCORE_MAP,
 )
 from app.models.metrics_schemas import (
     AICapabilitiesAssessment,
@@ -27,16 +27,15 @@ from app.models.metrics_schemas import (
     CompositeScore,
     DORAMetricDetail,
     DORAMetrics,
+    DXCore4Pillar,
     DXCore4PillarScore,
     DXCore4Scores,
-    DXCore4Pillar,
     LeadTimeBreakdown,
     MetricCard,
     Recommendation,
-    SPACEDimensionScore,
     SPACEDimension,
+    SPACEDimensionScore,
     SPACEMetrics,
-    TrendDirection,
 )
 
 logger = structlog.get_logger()

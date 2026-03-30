@@ -2,10 +2,11 @@
 
 import asyncio
 import uuid
+
 import structlog
 
-from app.tasks.celery_app import celery_app
 from app.services.orchestrator import AgentOrchestrator
+from app.tasks.celery_app import celery_app
 
 logger = structlog.get_logger()
 

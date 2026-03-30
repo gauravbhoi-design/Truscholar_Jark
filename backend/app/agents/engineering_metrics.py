@@ -4,7 +4,6 @@ Provides natural language analysis with context per Section 11.2:
 "Claude agent MUST explain metric context when displaying scores (not just numbers)"
 """
 
-import json
 import structlog
 
 from app.agents.base import BaseAgent

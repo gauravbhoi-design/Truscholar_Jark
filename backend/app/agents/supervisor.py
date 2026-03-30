@@ -1,9 +1,8 @@
 """Supervisor Agent — Routes queries to specialized agents and synthesizes results."""
 
-import structlog
 from dataclasses import dataclass
 
-import anthropic
+import structlog
 
 from app.agents.base import BaseAgent
 from app.config import get_settings

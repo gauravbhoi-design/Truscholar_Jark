@@ -1,7 +1,7 @@
 """GitHub OAuth authentication — users sign in with GitHub and grant repo access."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
@@ -150,7 +150,7 @@ def create_jwt_token(user_data: dict, github_access_token: str) -> str:
     The GitHub token is embedded so the backend can make API calls on behalf
     of the user when analyzing their repos.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_data["github_id"]),
         "login": user_data["login"],
@@ -193,7 +193,7 @@ async def get_current_user(
             algorithms=[settings.jwt_algorithm],
         )
 
-        if datetime.fromtimestamp(payload["exp"], tz=timezone.utc) < datetime.now(timezone.utc):
+        if datetime.fromtimestamp(payload["exp"], tz=UTC) < datetime.now(UTC):
             raise HTTPException(status_code=401, detail="Token expired")
 
         return payload
