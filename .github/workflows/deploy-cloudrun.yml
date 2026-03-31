@@ -194,6 +194,12 @@ jobs:
           URL=$(gcloud run services describe ${{ env.FRONTEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)' 2>/dev/null || echo "")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+      - name: Get existing API URL
+        id: existing-api
+        run: |
+          URL=$(gcloud run services describe ${{ env.API_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)' 2>/dev/null || echo "")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
       - name: Deploy API
         run: |
           gcloud run deploy ${{ env.API_SERVICE }} \
@@ -210,6 +216,7 @@ jobs:
             --allow-unauthenticated \
             --add-cloudsql-instances ${{ needs.setup-infra.outputs.db_connection_name }} \
             --set-env-vars "\
+          CLOUD_RUN_URL=${{ steps.existing-api.outputs.url }},\
           FRONTEND_URL=${{ steps.frontend.outputs.url }},\
           ENVIRONMENT=production,\
           DEBUG=false,\
@@ -233,17 +240,12 @@ jobs:
           GITHUB_CLIENT_ID=${{ secrets.APP_GITHUB_CLIENT_ID }},\
           GITHUB_CLIENT_SECRET=${{ secrets.APP_GITHUB_CLIENT_SECRET }},\
           GITHUB_TOKEN=${{ secrets.APP_GITHUB_TOKEN }},\
-          GITHUB_CALLBACK_URL=${{ secrets.API_URL }}/api/v1/auth/github/callback,\
-          GITHUB_CONNECT_CALLBACK_URL=${{ secrets.API_URL }}/api/v1/auth/github/connect/callback,\
           JWT_SECRET=${{ secrets.JWT_SECRET }},\
           GCP_OAUTH_CLIENT_ID=${{ secrets.GCP_OAUTH_CLIENT_ID }},\
           GCP_OAUTH_CLIENT_SECRET=${{ secrets.GCP_OAUTH_CLIENT_SECRET }},\
-          GCP_OAUTH_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/gcp/callback,\
-          GCP_SIGNIN_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/gcp/signin/callback,\
           CREDENTIALS_ENCRYPTION_KEY=${{ secrets.CREDENTIALS_ENCRYPTION_KEY }},\
           ZOHO_CLIENT_ID=${{ secrets.ZOHO_CLIENT_ID }},\
-          ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }},\
-          ZOHO_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/zoho/callback" \
+          ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }}" \
             --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest" \
             --service-account ${{ env.SA_EMAIL }}
 

@@ -42,7 +42,7 @@ def build_github_authorize_url(state: str | None = None) -> dict:
 
     params = {
         "client_id": settings.github_client_id,
-        "redirect_uri": settings.github_callback_url,
+        "redirect_uri": settings.effective_github_callback_url,
         "scope": " ".join(GITHUB_SCOPES),
         "state": state,
         "allow_signup": "true",
@@ -63,7 +63,7 @@ async def exchange_code_for_token(code: str) -> dict:
                 "client_id": settings.github_client_id,
                 "client_secret": settings.github_client_secret,
                 "code": code,
-                "redirect_uri": settings.github_callback_url,
+                "redirect_uri": settings.effective_github_callback_url,
             },
             headers={"Accept": "application/json"},
             timeout=15,
