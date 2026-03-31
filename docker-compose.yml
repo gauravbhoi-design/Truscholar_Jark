@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  # ── Backend API + Orchestrator ──────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - backend_data:/app/data
+      - ./gcp-key.json:/app/gcp-key.json:ro
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-key.json
+      - GCP_KEY_PATH_OVERRIDE=/app/gcp-key.json
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Dashboard Frontend ──────────────────────────────────────
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Worker Image (build-only, spawned by backend) ───────────
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    image: ai-devops-worker:latest
+    profiles:
+      - build-only
+
+volumes:
+  backend_data:

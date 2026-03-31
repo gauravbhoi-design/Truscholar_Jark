@@ -1,0 +1,9 @@
+.env
+gcp-key.json
+*.pyc
+__pycache__/
+node_modules/
+dist/
+data/
+*.db
+.vite/
