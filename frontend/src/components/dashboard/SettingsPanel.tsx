@@ -458,7 +458,11 @@ function GitHubConnectionCard() {
                 <p className="text-xs">{sourceLabel}</p>
               </div>
             </div>
-            {(status.source === "linked" || status.source === "pat") && (
+            {status.source === "jwt" ? (
+              <p className="text-xs text-muted-foreground">
+                GitHub is your primary sign-in method. Use <strong>Sign Out</strong> to disconnect.
+              </p>
+            ) : (
               <button
                 onClick={handleDisconnect}
                 disabled={disconnecting}

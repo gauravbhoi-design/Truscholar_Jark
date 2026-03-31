@@ -38,7 +38,7 @@ async def zoho_login(user: dict = Depends(get_current_user)):
 
     params = {
         "client_id": settings.zoho_client_id,
-        "redirect_uri": settings.zoho_redirect_uri,
+        "redirect_uri": settings.effective_zoho_redirect_uri,
         "response_type": "code",
         "scope": "ZohoSprints.teams.READ,ZohoSprints.projects.READ,ZohoSprints.sprints.READ,ZohoSprints.items.READ",
         "access_type": "offline",
@@ -72,7 +72,7 @@ async def zoho_callback(
                 "code": code,
                 "client_id": settings.zoho_client_id,
                 "client_secret": settings.zoho_client_secret,
-                "redirect_uri": settings.zoho_redirect_uri,
+                "redirect_uri": settings.effective_zoho_redirect_uri,
                 "grant_type": "authorization_code",
             },
         )
