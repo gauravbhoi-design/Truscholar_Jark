@@ -18,6 +18,17 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     logger.info("Starting DevOps Co-Pilot", version=settings.app_version)
+
+    # Auto-create database tables if they don't exist
+    try:
+        from app.models.database import Base, engine
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables verified")
+    except Exception as e:
+        logger.error("Failed to create database tables", error=str(e))
+
     app.state.redis = None
     try:
         redis = RedisService(settings.redis_url)
