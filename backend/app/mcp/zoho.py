@@ -8,7 +8,7 @@ from app.config import get_settings
 logger = structlog.get_logger()
 settings = get_settings()
 
-ZOHO_SPRINTS_API = "https://sprints.zoho.com/zsapi"
+ZOHO_SPRINTS_API = "https://sprints.zoho.in/zsapi"
 
 
 class ZohoSprintsMCPClient:

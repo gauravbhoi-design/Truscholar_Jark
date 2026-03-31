@@ -18,9 +18,9 @@ logger = structlog.get_logger()
 settings = get_settings()
 router = APIRouter(prefix="/auth/zoho", tags=["zoho-auth"])
 
-ZOHO_AUTH_URL = "https://accounts.zoho.com/oauth/v2/auth"
-ZOHO_TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
-ZOHO_USERINFO_URL = "https://accounts.zoho.com/oauth/user/info"
+ZOHO_AUTH_URL = "https://accounts.zoho.in/oauth/v2/auth"
+ZOHO_TOKEN_URL = "https://accounts.zoho.in/oauth/v2/token"
+ZOHO_USERINFO_URL = "https://accounts.zoho.in/oauth/user/info"
 
 
 @router.get("/login")
@@ -118,7 +118,7 @@ async def zoho_callback(
         else:
             raise HTTPException(
                 status_code=400,
-                detail="No refresh token from Zoho. Revoke app access at accounts.zoho.com and retry.",
+                detail="No refresh token from Zoho. Revoke app access at accounts.zoho.in and retry.",
             )
 
     encrypted_token = encrypt(refresh_token)
