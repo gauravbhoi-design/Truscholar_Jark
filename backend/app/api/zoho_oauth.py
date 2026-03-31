@@ -77,20 +77,26 @@ async def zoho_callback(
             },
         )
 
+    tokens = resp.json()
+    logger.info("Zoho token exchange response", status=resp.status_code, keys=list(tokens.keys()), redirect_uri=settings.effective_zoho_redirect_uri)
+
     if resp.status_code != 200:
         raise HTTPException(status_code=400, detail=f"Zoho token exchange failed: {resp.text[:200]}")
 
-    tokens = resp.json()
     access_token = tokens.get("access_token", "")
     refresh_token = tokens.get("refresh_token", "")
 
+    if not access_token:
+        logger.error("Zoho token exchange returned no access_token", response=tokens)
+        raise HTTPException(status_code=400, detail=f"Zoho returned no access token: {tokens}")
+
     # Get user info
+    zoho_email = ""
     async with httpx.AsyncClient() as client:
         user_resp = await client.get(
             ZOHO_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
         )
-    zoho_email = ""
     if user_resp.status_code == 200:
         zoho_user = user_resp.json()
         zoho_email = zoho_user.get("Email", "")
