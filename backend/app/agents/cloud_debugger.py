@@ -298,7 +298,8 @@ Always output structured analysis with:
 
         elif tool_name == "run_command":
             from app.mcp.terminal import TerminalMCPClient
-            terminal = TerminalMCPClient()
+            user = getattr(self, "_current_user", None) or {}
+            terminal = TerminalMCPClient(gcp_access_token=user.get("gcp_access_token"))
             return await terminal.execute(
                 command=tool_input["command"],
                 cwd=tool_input.get("cwd"),

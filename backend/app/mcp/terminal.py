@@ -61,11 +61,18 @@ class TerminalMCPClient:
 
     Agents use this to run diagnostics, check container status, view logs,
     and interact with Docker containers.
+
+    Args:
+        working_dir: Default working directory for commands.
+        timeout: Default timeout in seconds.
+        gcp_access_token: User's OAuth access token for gcloud CLI commands.
+            When set, gcloud commands run as the user (not the service account).
     """
 
-    def __init__(self, working_dir: str | None = None, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, working_dir: str | None = None, timeout: int = DEFAULT_TIMEOUT, gcp_access_token: str | None = None):
         self.working_dir = working_dir
         self.timeout = timeout
+        self.gcp_access_token = gcp_access_token
 
     def _is_command_allowed(self, command: str) -> tuple[bool, str]:
         """Check if a command is safe to execute."""
@@ -128,12 +135,19 @@ class TerminalMCPClient:
 
         logger.info("Executing command", command=command[:100], cwd=effective_cwd)
 
+        # Inject user's GCP token for gcloud commands so they run as the user
+        import os
+        env = os.environ.copy()
+        if self.gcp_access_token and command.strip().startswith("gcloud"):
+            env["CLOUDSDK_AUTH_ACCESS_TOKEN"] = self.gcp_access_token
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=effective_cwd,
+                env=env,
             )
 
             stdout, stderr = await asyncio.wait_for(
