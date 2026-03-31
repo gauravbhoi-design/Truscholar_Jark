@@ -239,7 +239,7 @@ jobs:
           GCP_OAUTH_CLIENT_ID=${{ secrets.GCP_OAUTH_CLIENT_ID }},\
           GCP_OAUTH_CLIENT_SECRET=${{ secrets.GCP_OAUTH_CLIENT_SECRET }},\
           GCP_OAUTH_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/gcp/callback,\
-          GOOGLE_SIGNIN_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/google/callback,\
+          GCP_SIGNIN_REDIRECT_URI=${{ secrets.API_URL }}/api/v1/auth/gcp/signin/callback,\
           CREDENTIALS_ENCRYPTION_KEY=${{ secrets.CREDENTIALS_ENCRYPTION_KEY }},\
           ZOHO_CLIENT_ID=${{ secrets.ZOHO_CLIENT_ID }},\
           ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }},\

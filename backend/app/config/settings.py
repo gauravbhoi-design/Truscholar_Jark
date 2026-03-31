@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings
 
@@ -44,14 +45,17 @@ class Settings(BaseSettings):
 
     @property
     def postgres_url(self) -> str:
+        # URL-encode user/password to handle special characters like @, #, etc.
+        user = quote_plus(self.postgres_user)
+        password = quote_plus(self.postgres_password)
         # Cloud SQL uses Unix socket: POSTGRES_HOST=/cloudsql/project:region:instance
         if self.postgres_host.startswith("/cloudsql/"):
             return (
-                f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+                f"postgresql+asyncpg://{user}:{password}"
                 f"@/{self.postgres_db}?host={self.postgres_host}"
             )
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+asyncpg://{user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
@@ -90,7 +94,7 @@ class Settings(BaseSettings):
     gcp_oauth_client_id: str = ""
     gcp_oauth_client_secret: str = ""
     gcp_oauth_redirect_uri: str = "http://localhost:8000/api/v1/auth/gcp/callback"
-    google_signin_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
+    gcp_signin_redirect_uri: str = "http://localhost:8000/api/v1/auth/gcp/signin/callback"
     gcp_oauth_scopes: str = (
         "openid email profile "
         "https://www.googleapis.com/auth/cloud-platform.read-only "
@@ -130,10 +134,10 @@ class Settings(BaseSettings):
         return self.gcp_oauth_redirect_uri
 
     @property
-    def effective_google_signin_redirect_uri(self) -> str:
+    def effective_gcp_signin_redirect_uri(self) -> str:
         if self.cloud_run_url:
-            return f"{self.cloud_run_url}/api/v1/auth/google/callback"
-        return self.google_signin_redirect_uri
+            return f"{self.cloud_run_url}/api/v1/auth/gcp/signin/callback"
+        return self.gcp_signin_redirect_uri
 
     @property
     def effective_zoho_redirect_uri(self) -> str:

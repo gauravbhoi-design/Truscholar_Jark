@@ -23,13 +23,36 @@ export async function getGitHubLoginUrl(): Promise<string> {
 }
 
 /**
- * Get the Google OAuth login URL from the backend.
+ * Get the GCP OAuth sign-in URL from the backend.
  */
-export async function getGoogleLoginUrl(): Promise<string> {
-  const res = await fetch(`${API_URL}/auth/google/login`);
+export async function getGcpLoginUrl(): Promise<string> {
+  const res = await fetch(`${API_URL}/auth/gcp/signin`);
   if (!res.ok) return "";
   const data = await res.json();
   return data.authorize_url;
+}
+
+/**
+ * Fetch the user's GCP projects.
+ */
+export async function fetchGcpProjects(token: string): Promise<{ id: string; name: string; number: string }[]> {
+  const res = await fetch(`${API_URL}/auth/gcp/projects`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.projects || [];
+}
+
+/**
+ * Select a GCP project for the user.
+ */
+export async function selectGcpProject(token: string, projectId: string): Promise<boolean> {
+  const res = await fetch(`${API_URL}/auth/gcp/select-project?project_id=${encodeURIComponent(projectId)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
 }
 
 /**

@@ -2,22 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { Github, ArrowRight, Shield, Bot, Activity, Cloud } from "lucide-react";
-import { getGitHubLoginUrl, getGoogleLoginUrl, getToken, fetchCurrentUser, type AuthUser } from "@/lib/auth";
+import { getGitHubLoginUrl, getGcpLoginUrl, getToken, fetchCurrentUser, fetchGcpProjects, selectGcpProject, type AuthUser } from "@/lib/auth";
 import Dashboard from "@/components/dashboard/Dashboard";
 
 export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [loginUrl, setLoginUrl] = useState<string>("");
-  const [googleLoginUrl, setGoogleLoginUrl] = useState<string>("");
+  const [gcpLoginUrl, setGcpLoginUrl] = useState<string>("");
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
 
   useEffect(() => {
     // Check for token in URL (from OAuth callback redirect)
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
+    const isGcpSignin = params.get("gcp_signin") === "true";
+
     if (urlToken) {
       localStorage.setItem("copilot_token", urlToken);
       window.history.replaceState({}, "", "/");
+
+      // If this was a GCP sign-in, show project selector before dashboard
+      if (isGcpSignin) {
+        fetchCurrentUser(urlToken)
+          .then((u) => {
+            setUser(u);
+            setShowProjectSelector(true);
+          })
+          .catch(() => localStorage.removeItem("copilot_token"))
+          .finally(() => setLoading(false));
+        return;
+      }
     }
 
     // Clean up connect callback params (github=connected, gcp=connected)
@@ -42,8 +57,8 @@ export default function Home() {
     getGitHubLoginUrl()
       .then(setLoginUrl)
       .catch(() => {});
-    getGoogleLoginUrl()
-      .then(setGoogleLoginUrl)
+    getGcpLoginUrl()
+      .then(setGcpLoginUrl)
       .catch(() => {});
   }, []);
 
@@ -55,20 +70,116 @@ export default function Home() {
     );
   }
 
+  if (user && showProjectSelector) {
+    return <GcpProjectSelector onDone={() => setShowProjectSelector(false)} />;
+  }
+
   if (user) {
     return <Dashboard user={user} />;
   }
 
-  return <LoginPage loginUrl={loginUrl} googleLoginUrl={googleLoginUrl} />;
+  return <LoginPage loginUrl={loginUrl} gcpLoginUrl={gcpLoginUrl} />;
 }
 
-function LoginPage({ loginUrl, googleLoginUrl }: { loginUrl: string; googleLoginUrl: string }) {
+function GcpProjectSelector({ onDone }: { onDone: () => void }) {
+  const [projects, setProjects] = useState<{ id: string; name: string; number: string }[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [selecting, setSelecting] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    fetchGcpProjects(token)
+      .then(setProjects)
+      .catch(() => {})
+      .finally(() => setLoadingProjects(false));
+  }, []);
+
+  const handleSelect = async (projectId: string) => {
+    const token = getToken();
+    if (!token) return;
+    setSelecting(projectId);
+    await selectGcpProject(token, projectId);
+    onDone();
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <header className="border-b">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center">
+          <Activity className="h-6 w-6 text-primary mr-2" />
+          <span className="font-bold text-lg">DevOps Co-Pilot</span>
+        </div>
+      </header>
+
+      <main className="flex-1 flex items-center justify-center px-6">
+        <div className="max-w-lg w-full">
+          <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
+            <Cloud className="h-6 w-6 text-blue-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-center mb-2">Select a GCP Project</h2>
+          <p className="text-muted-foreground text-center mb-6 text-sm">
+            Choose which project to monitor and debug
+          </p>
+
+          {loadingProjects ? (
+            <div className="text-center text-muted-foreground animate-pulse py-8">
+              Loading your GCP projects...
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground mb-4">No GCP projects found for your account.</p>
+              <button
+                onClick={onDone}
+                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
+              >
+                Continue to Dashboard
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => handleSelect(p.id)}
+                  disabled={selecting !== null}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-lg border bg-card hover:bg-accent transition-colors text-left disabled:opacity-50"
+                >
+                  <div>
+                    <p className="font-medium text-sm">{p.name}</p>
+                    <p className="text-xs text-muted-foreground">{p.id}</p>
+                  </div>
+                  {selecting === p.id ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                  ) : (
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {projects.length > 0 && (
+            <button
+              onClick={onDone}
+              className="w-full mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Skip — choose later in Settings
+            </button>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function LoginPage({ loginUrl, gcpLoginUrl }: { loginUrl: string; gcpLoginUrl: string }) {
   const handleGitHubLogin = () => {
     if (loginUrl) window.location.href = loginUrl;
   };
 
-  const handleGoogleLogin = () => {
-    if (googleLoginUrl) window.location.href = googleLoginUrl;
+  const handleGcpLogin = () => {
+    if (gcpLoginUrl) window.location.href = gcpLoginUrl;
   };
 
   return (
@@ -108,17 +219,12 @@ function LoginPage({ loginUrl, googleLoginUrl }: { loginUrl: string; googleLogin
             </button>
 
             <button
-              onClick={handleGoogleLogin}
-              disabled={!googleLoginUrl}
-              className="w-72 inline-flex items-center justify-center gap-3 px-6 py-3 rounded-lg bg-white hover:bg-gray-50 text-gray-700 font-medium border border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleGcpLogin}
+              disabled={!gcpLoginUrl}
+              className="w-72 inline-flex items-center justify-center gap-3 px-6 py-3 rounded-lg bg-[#1a73e8] hover:bg-[#1765cc] text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg className="h-5 w-5" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-              </svg>
-              Sign in with Google
+              <Cloud className="h-5 w-5" />
+              Sign in with GCP
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -126,7 +232,7 @@ function LoginPage({ loginUrl, googleLoginUrl }: { loginUrl: string; googleLogin
           <p className="text-xs text-muted-foreground mt-4">
             <strong>GitHub:</strong> Access your repositories for code analysis.
             <br />
-            <strong>Google:</strong> Access your GCP project for cloud debugging.
+            <strong>GCP:</strong> Access your cloud projects for monitoring & debugging.
           </p>
 
           {/* Features */}

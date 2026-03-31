@@ -427,17 +427,18 @@ async def github_disconnect(
     return {"status": "disconnected"}
 
 
-# ─── Google OAuth Sign-In ──────────────────────────────────────────────────
+# ─── GCP OAuth Sign-In ────────────────────────────────────────────────────
 
 
-@router.get("/google/login")
-async def google_login():
-    """Initiate Google OAuth sign-in flow.
+@router.get("/gcp/signin")
+async def gcp_signin():
+    """Initiate GCP OAuth sign-in flow.
 
-    Returns the Google authorization URL for sign-in + cloud access.
+    Returns the Google authorization URL for sign-in + GCP cloud access.
+    After sign-in, user is redirected to frontend with a project selector.
     """
     if not settings.gcp_oauth_client_id:
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+        raise HTTPException(status_code=503, detail="GCP OAuth not configured")
 
     state = secrets.token_urlsafe(32)
 
@@ -451,7 +452,7 @@ async def google_login():
 
     params = {
         "client_id": settings.gcp_oauth_client_id,
-        "redirect_uri": settings.google_signin_redirect_uri,
+        "redirect_uri": settings.effective_gcp_signin_redirect_uri,
         "response_type": "code",
         "scope": scopes,
         "access_type": "offline",
@@ -468,18 +469,17 @@ async def google_login():
     }
 
 
-@router.get("/google/callback")
-async def google_callback(
+@router.get("/gcp/signin/callback")
+async def gcp_signin_callback(
     code: str = Query(...),
     state: str = Query(""),
 ):
-    """Google OAuth callback — exchanges code for token and returns JWT.
+    """GCP OAuth sign-in callback — exchanges code for token, stores GCP creds, returns JWT.
 
-    Signs the user in with Google and also stores their GCP credentials
-    for cloud access.
+    Redirects to frontend with token and gcp_signin flag so frontend shows project selector.
     """
     if not settings.gcp_oauth_client_id:
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+        raise HTTPException(status_code=503, detail="GCP OAuth not configured")
 
     try:
         # 1. Exchange code for tokens
@@ -490,15 +490,15 @@ async def google_callback(
                     "code": code,
                     "client_id": settings.gcp_oauth_client_id,
                     "client_secret": settings.gcp_oauth_client_secret,
-                    "redirect_uri": settings.google_signin_redirect_uri,
+                    "redirect_uri": settings.effective_gcp_signin_redirect_uri,
                     "grant_type": "authorization_code",
                 },
                 timeout=15,
             )
 
         if token_resp.status_code != 200:
-            logger.error("Google token exchange failed", body=token_resp.text)
-            raise HTTPException(status_code=400, detail="Failed to exchange Google authorization code")
+            logger.error("GCP token exchange failed", body=token_resp.text)
+            raise HTTPException(status_code=400, detail="Failed to exchange GCP authorization code")
 
         tokens = token_resp.json()
         access_token = tokens["access_token"]
@@ -512,7 +512,7 @@ async def google_callback(
                 timeout=10,
             )
         if userinfo_resp.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to fetch Google user profile")
+            raise HTTPException(status_code=400, detail="Failed to fetch user profile")
 
         google_user = userinfo_resp.json()
         google_email = google_user.get("email", "")
@@ -520,7 +520,7 @@ async def google_callback(
         google_id = google_user.get("id", "")
         google_avatar = google_user.get("picture", "")
 
-        logger.info("Google user authenticated", email=google_email, name=google_name)
+        logger.info("GCP user authenticated", email=google_email, name=google_name)
 
         # 3. Create JWT (same format as GitHub, so the rest of the app works)
         user_data = {
@@ -533,7 +533,6 @@ async def google_callback(
             "orgs": [],
         }
 
-        # Use empty string for github_token since this is Google sign-in
         jwt_token = create_jwt_token(user_data, github_access_token="")
 
         # 4. If we got a refresh_token, store encrypted GCP credentials
@@ -558,7 +557,7 @@ async def google_callback(
                 if projects_resp.status_code == 200:
                     projects = [p["projectId"] for p in projects_resp.json().get("projects", [])]
 
-                # Store credentials
+                # Store credentials (don't auto-select project — let user choose)
                 async with async_session() as db:
                     user_id = f"google_{google_id}"
                     result = await db.execute(
@@ -573,13 +572,11 @@ async def google_callback(
                         cred.encrypted_refresh_token = encrypted_token
                         cred.email = google_email
                         cred.is_active = True
-                        if projects and not cred.project_id:
-                            cred.project_id = projects[0]
                     else:
                         cred = CloudCredential(
                             user_id=user_id,
                             provider="gcp",
-                            project_id=projects[0] if projects else None,
+                            project_id=None,
                             email=google_email,
                             encrypted_refresh_token=encrypted_token,
                             scopes=tokens.get("scope", ""),
@@ -589,18 +586,18 @@ async def google_callback(
 
                     await db.commit()
 
-                logger.info("GCP credentials stored for Google sign-in user", email=google_email, projects=len(projects))
+                logger.info("GCP credentials stored", email=google_email, projects=len(projects))
             except Exception as e:
                 logger.warning("Failed to store GCP credentials during sign-in", error=str(e))
 
-        # 5. Redirect to frontend
+        # 5. Redirect to frontend with gcp_signin flag → triggers project selector
         frontend_url = settings.effective_frontend_url
-        redirect_url = f"{frontend_url}/?token={jwt_token}"
+        redirect_url = f"{frontend_url}/?token={jwt_token}&gcp_signin=true"
 
         return RedirectResponse(url=redirect_url)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Google OAuth callback failed", error=str(e))
-        raise HTTPException(status_code=500, detail="Google authentication failed")
+        logger.error("GCP OAuth sign-in failed", error=str(e))
+        raise HTTPException(status_code=500, detail="GCP authentication failed")
