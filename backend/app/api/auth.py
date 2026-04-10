@@ -191,6 +191,9 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
     sub = str(user_data["github_id"])
     email = user_data.get("email") or f"{user_data['login']}@users.noreply.github.com"
     name = user_data.get("name") or user_data["login"]
+    # The users.last_login_at column is TIMESTAMP WITHOUT TIME ZONE
+    # (matches the rest of the schema), so we store a naive UTC datetime.
+    now_naive = datetime.now(UTC).replace(tzinfo=None)
 
     result = await db.execute(select(User).where(User.auth0_sub == sub))
     user = result.scalar_one_or_none()
@@ -200,7 +203,7 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
         user.name = name
         user.login = user_data.get("login")
         user.avatar_url = user_data.get("avatar_url")
-        user.last_login_at = datetime.now(UTC)
+        user.last_login_at = now_naive
         user.is_active = True
     else:
         # First user becomes admin so the admin panel is bootstrappable.
@@ -214,7 +217,7 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
             login=user_data.get("login"),
             avatar_url=user_data.get("avatar_url"),
             role=role,
-            last_login_at=datetime.now(UTC),
+            last_login_at=now_naive,
             is_active=True,
         )
         db.add(user)
