@@ -20,7 +20,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="engineer")  # admin, engineer, viewer
-    auth0_sub: Mapped[str] = mapped_column(String(255), unique=True, nullable=True)
+    auth0_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
+    login: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -169,6 +172,7 @@ class GitHubAppInstallation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     installation_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # JWT sub of the TruJark user who installed
     account_login: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # org or user login
     account_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "Organization" or "User"
     account_id: Mapped[int] = mapped_column(Integer, nullable=False)

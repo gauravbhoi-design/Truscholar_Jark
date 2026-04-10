@@ -453,3 +453,164 @@ async def get_stats(
         "total_cost_usd": round(total_cost, 2),
         "total_agent_actions": audit_count,
     }
+
+
+@router.get("/admin/users")
+async def list_all_users(
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List every user with usage and cost aggregates for the admin panel.
+
+    Joins users → conversations to compute per-user totals. Plan and
+    GitHub-App-Installation counts are joined separately by JWT-sub since
+    those tables key on the string sub instead of the User UUID.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.database import (
+        Conversation,
+        GitHubAppInstallation,
+        Message,
+        Plan,
+        User,
+    )
+
+    # Per-user conversation + cost aggregates
+    conv_agg = (
+        select(
+            Conversation.user_id.label("user_id"),
+            func.count(Conversation.id).label("conversation_count"),
+            func.coalesce(func.sum(Conversation.total_cost_usd), 0.0).label("conversation_cost"),
+            func.max(Conversation.updated_at).label("last_conversation_at"),
+        )
+        .group_by(Conversation.user_id)
+        .subquery()
+    )
+
+    # Per-user message count (joined through conversations)
+    msg_agg = (
+        select(
+            Conversation.user_id.label("user_id"),
+            func.count(Message.id).label("message_count"),
+        )
+        .join(Message, Message.conversation_id == Conversation.id)
+        .group_by(Conversation.user_id)
+        .subquery()
+    )
+
+    # Plans key on JWT sub (string), join via User.auth0_sub
+    plan_agg = (
+        select(
+            Plan.user_id.label("sub"),
+            func.count(Plan.id).label("plan_count"),
+            func.coalesce(func.sum(Plan.total_cost_usd), 0.0).label("plan_cost"),
+        )
+        .group_by(Plan.user_id)
+        .subquery()
+    )
+
+    install_agg = (
+        select(
+            GitHubAppInstallation.user_id.label("sub"),
+            func.count(GitHubAppInstallation.id).label("installation_count"),
+        )
+        .where(GitHubAppInstallation.is_active == True)
+        .group_by(GitHubAppInstallation.user_id)
+        .subquery()
+    )
+
+    query = (
+        select(
+            User.id,
+            User.email,
+            User.name,
+            User.login,
+            User.avatar_url,
+            User.role,
+            User.is_active,
+            User.created_at,
+            User.last_login_at,
+            func.coalesce(conv_agg.c.conversation_count, 0).label("conversation_count"),
+            func.coalesce(conv_agg.c.conversation_cost, 0.0).label("conversation_cost"),
+            conv_agg.c.last_conversation_at,
+            func.coalesce(msg_agg.c.message_count, 0).label("message_count"),
+            func.coalesce(plan_agg.c.plan_count, 0).label("plan_count"),
+            func.coalesce(plan_agg.c.plan_cost, 0.0).label("plan_cost"),
+            func.coalesce(install_agg.c.installation_count, 0).label("installation_count"),
+        )
+        .outerjoin(conv_agg, conv_agg.c.user_id == User.id)
+        .outerjoin(msg_agg, msg_agg.c.user_id == User.id)
+        .outerjoin(plan_agg, plan_agg.c.sub == User.auth0_sub)
+        .outerjoin(install_agg, install_agg.c.sub == User.auth0_sub)
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    users_out = []
+    grand_cost = 0.0
+    for r in rows:
+        total_cost = float(r.conversation_cost or 0.0) + float(r.plan_cost or 0.0)
+        grand_cost += total_cost
+        # Last activity = max(last_login, last_conversation)
+        last_active = None
+        for ts in (r.last_login_at, r.last_conversation_at):
+            if ts and (last_active is None or ts > last_active):
+                last_active = ts
+        users_out.append({
+            "id": str(r.id),
+            "email": r.email,
+            "name": r.name,
+            "login": r.login,
+            "avatar_url": r.avatar_url,
+            "role": r.role,
+            "is_active": r.is_active,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "last_login_at": r.last_login_at.isoformat() if r.last_login_at else None,
+            "last_active_at": last_active.isoformat() if last_active else None,
+            "conversation_count": int(r.conversation_count or 0),
+            "message_count": int(r.message_count or 0),
+            "plan_count": int(r.plan_count or 0),
+            "installation_count": int(r.installation_count or 0),
+            "total_cost_usd": round(total_cost, 4),
+        })
+
+    # Sort by total cost descending — most expensive users first
+    users_out.sort(key=lambda u: u["total_cost_usd"], reverse=True)
+
+    return {
+        "total_users": len(users_out),
+        "total_cost_usd": round(grand_cost, 4),
+        "users": users_out,
+    }
+
+
+@router.patch("/admin/users/{user_id}/role")
+async def update_user_role(
+    user_id: uuid.UUID,
+    payload: dict,
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Promote or demote a user (admin / engineer / viewer)."""
+    from sqlalchemy import select
+
+    from app.models.database import User
+
+    new_role = payload.get("role", "")
+    if new_role not in {r.value for r in UserRole}:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {new_role}")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Don't let an admin demote themselves into a lockout
+    if str(target.id) == user.get("db_id") and new_role != "admin":
+        raise HTTPException(status_code=400, detail="You can't demote yourself")
+
+    target.role = new_role
+    await db.commit()
+    return {"id": str(target.id), "role": target.role}

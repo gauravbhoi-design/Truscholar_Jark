@@ -11,16 +11,28 @@ import {
   LayoutDashboard,
   BarChart3,
   Gauge,
+  ShieldCheck,
 } from "lucide-react";
 
-export type TabId = "overview" | "chat" | "repos" | "metrics" | "agents" | "sprints" | "logs" | "audit" | "settings";
+export type TabId =
+  | "overview"
+  | "chat"
+  | "repos"
+  | "metrics"
+  | "agents"
+  | "sprints"
+  | "logs"
+  | "audit"
+  | "admin"
+  | "settings";
 
 interface SidebarProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
+  isAdmin?: boolean;
 }
 
-const navItems = [
+const baseNavItems = [
   { id: "overview" as const, label: "Dashboard", icon: LayoutDashboard },
   { id: "chat" as const, label: "AI Chat", icon: MessageSquare },
   { id: "repos" as const, label: "Repositories", icon: GitBranch },
@@ -31,7 +43,10 @@ const navItems = [
   { id: "audit" as const, label: "Audit Log", icon: Shield },
 ];
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+const adminNavItem = { id: "admin" as const, label: "Admin", icon: ShieldCheck };
+
+export function Sidebar({ activeTab, onTabChange, isAdmin = false }: SidebarProps) {
+  const navItems = isAdmin ? [...baseNavItems, adminNavItem] : baseNavItems;
   return (
     <aside className="w-16 md:w-56 border-r flex flex-col bg-card shrink-0">
       {/* Logo */}

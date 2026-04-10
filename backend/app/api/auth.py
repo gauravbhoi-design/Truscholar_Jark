@@ -144,11 +144,18 @@ async def fetch_github_user(access_token: str) -> dict:
         }
 
 
-def create_jwt_token(user_data: dict, github_access_token: str) -> str:
+def create_jwt_token(
+    user_data: dict,
+    github_access_token: str,
+    db_id: str | None = None,
+    role: str = "engineer",
+) -> str:
     """Create a JWT token containing user info and the GitHub access token.
 
     The GitHub token is embedded so the backend can make API calls on behalf
-    of the user when analyzing their repos.
+    of the user when analyzing their repos. db_id (the persisted User.id UUID
+    as a string) is embedded so authenticated routes can join against the
+    Conversations / Plans / Messages tables.
     """
     now = datetime.now(UTC)
     payload = {
@@ -157,13 +164,64 @@ def create_jwt_token(user_data: dict, github_access_token: str) -> str:
         "name": user_data["name"],
         "email": user_data.get("email"),
         "avatar_url": user_data.get("avatar_url"),
-        "role": "engineer",  # Default role; admins promoted manually
+        "role": role,
+        "db_id": db_id,
         "github_token": github_access_token,
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
 
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[name-defined]
+    """Create or update the persisted User row for a freshly authenticated user.
+
+    Keyed by `auth0_sub` (the JWT `sub` claim, which is the GitHub user ID
+    string or `google_<id>` for GCP sign-ins). Returns the User row so the
+    caller can embed `id` into the JWT.
+
+    The very first user to sign up is automatically promoted to admin so the
+    admin panel is reachable without a manual DB poke.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.database import User
+
+    sub = str(user_data["github_id"])
+    email = user_data.get("email") or f"{user_data['login']}@users.noreply.github.com"
+    name = user_data.get("name") or user_data["login"]
+
+    result = await db.execute(select(User).where(User.auth0_sub == sub))
+    user = result.scalar_one_or_none()
+
+    if user:
+        user.email = email
+        user.name = name
+        user.login = user_data.get("login")
+        user.avatar_url = user_data.get("avatar_url")
+        user.last_login_at = datetime.now(UTC)
+        user.is_active = True
+    else:
+        # First user becomes admin so the admin panel is bootstrappable.
+        existing_count = await db.scalar(select(func.count(User.id))) or 0
+        role = "admin" if existing_count == 0 else "engineer"
+
+        user = User(
+            auth0_sub=sub,
+            email=email,
+            name=name,
+            login=user_data.get("login"),
+            avatar_url=user_data.get("avatar_url"),
+            role=role,
+            last_login_at=datetime.now(UTC),
+            is_active=True,
+        )
+        db.add(user)
+
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 async def get_current_user(

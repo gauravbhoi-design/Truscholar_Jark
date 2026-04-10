@@ -580,7 +580,9 @@ function GitHubAppCard() {
 
   const loadInstallations = async () => {
     try {
-      const res = await fetch(`${API_URL}/github-app/installations`);
+      const res = await fetch(`${API_URL}/github-app/installations`, {
+        headers: getAuthHeader(),
+      });
       if (res.ok) {
         const data = await res.json();
         setInstallations(data.installations || []);
@@ -600,7 +602,9 @@ function GitHubAppCard() {
     setInstalling(true);
     setError("");
     try {
-      const res = await fetch(`${API_URL}/github-app/install`);
+      const res = await fetch(`${API_URL}/github-app/install`, {
+        headers: getAuthHeader(),
+      });
       if (res.ok) {
         const data = await res.json();
         // Open in new tab so user keeps the dashboard

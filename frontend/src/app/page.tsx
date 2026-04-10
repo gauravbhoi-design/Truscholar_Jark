@@ -185,8 +185,18 @@ function LoginPage({ loginUrl, gcpLoginUrl }: { loginUrl: string; gcpLoginUrl: s
   };
 
   const handleInstallApp = async () => {
+    // Installation must be linked to a TruJark account, so the user has to
+    // sign in first. After login they can install from Settings.
+    const token = typeof window !== "undefined" ? localStorage.getItem("copilot_token") : null;
+    if (!token) {
+      alert("Please sign in with GitHub first, then install the app from Settings.");
+      if (loginUrl) window.location.href = loginUrl;
+      return;
+    }
     try {
-      const res = await fetch(`${API_URL}/github-app/install`);
+      const res = await fetch(`${API_URL}/github-app/install`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) {
         const data = await res.json();
         window.location.href = data.install_url;

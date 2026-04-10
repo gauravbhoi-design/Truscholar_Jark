@@ -21,10 +21,38 @@ async def lifespan(app: FastAPI):
 
     # Auto-create database tables if they don't exist
     try:
+        from sqlalchemy import text
+
         from app.models.database import Base, engine
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Lightweight in-place migrations for additive columns.
+            # Safe to re-run; PG no-ops if column already exists.
+            await conn.execute(text(
+                "ALTER TABLE github_app_installations "
+                "ADD COLUMN IF NOT EXISTS user_id VARCHAR(255)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_github_app_installations_user_id "
+                "ON github_app_installations (user_id)"
+            ))
+            # User profile fields used by the admin panel
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS login VARCHAR(255)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_users_auth0_sub ON users (auth0_sub)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_users_login ON users (login)"
+            ))
         logger.info("Database tables verified")
     except Exception as e:
         logger.error("Failed to create database tables", error=str(e))

@@ -12,6 +12,7 @@ import { SprintPanel } from "./SprintPanel";
 import { LiveLogViewer } from "./LiveLogViewer";
 import { SettingsPanel } from "./SettingsPanel";
 import { MetricsPanel } from "./MetricsPanel";
+import { AdminPanel } from "./AdminPanel";
 import { LogOut } from "lucide-react";
 
 interface Props {
@@ -30,9 +31,11 @@ export default function Dashboard({ user }: Props) {
     return () => window.removeEventListener("navigate-tab", handler as EventListener);
   }, []);
 
+  const isAdmin = user.role === "admin";
+
   return (
     <div className="flex h-screen">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} isAdmin={isAdmin} />
 
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -73,6 +76,7 @@ export default function Dashboard({ user }: Props) {
           {activeTab === "metrics" && <MetricsPanel />}
           {activeTab === "sprints" && <SprintPanel />}
           {activeTab === "logs" && <LiveLogViewer />}
+          {activeTab === "admin" && isAdmin && <AdminPanel />}
           {activeTab === "settings" && <SettingsPanel />}
         </div>
       </main>

@@ -12,16 +12,18 @@ providing:
 import hashlib
 import hmac
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt as pyjwt  # PyJWT for RS256 signing
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from fastapi.responses import RedirectResponse
+from jose import JWTError, jwt as jose_jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_user
 from app.config import get_settings
 from app.models.database import GitHubAppInstallation, WebhookEvent, get_db
 
@@ -122,13 +124,44 @@ async def get_installation_token_for_repo(repo_full_name: str, db: AsyncSession)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
+def _create_install_state_token(user_sub: str) -> str:
+    """Create a short-lived signed state token used to link the installer
+    to their TruJark account when GitHub redirects back to /setup.
+    """
+    payload = {
+        "sub": user_sub,
+        "purpose": "github_app_install",
+        "iat": datetime.now(UTC),
+        "exp": datetime.now(UTC) + timedelta(minutes=30),
+    }
+    return jose_jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def _decode_install_state_token(token: str) -> str | None:
+    """Verify and decode an install state token. Returns the user sub or None."""
+    try:
+        payload = jose_jwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
+        if payload.get("purpose") != "github_app_install":
+            return None
+        return payload.get("sub")
+    except JWTError as e:
+        logger.warning("Invalid install state token", error=str(e))
+        return None
+
+
 @router.get("/install")
-async def install_app():
-    """Redirect user to install the GitHub App on their org/account."""
+async def install_app(user: dict = Depends(get_current_user)):
+    """Return a GitHub App install URL bound to the current user via a signed state token."""
     if not settings.github_app_name:
         raise HTTPException(status_code=503, detail="GitHub App not configured")
 
-    install_url = f"https://github.com/apps/{settings.github_app_name}/installations/new"
+    state = _create_install_state_token(user["sub"])
+    install_url = (
+        f"https://github.com/apps/{settings.github_app_name}/installations/new"
+        f"?state={state}"
+    )
     return {"install_url": install_url}
 
 
@@ -136,13 +169,25 @@ async def install_app():
 async def setup_callback(
     installation_id: int = Query(...),
     setup_action: str = Query("install"),
+    state: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """GitHub App post-installation setup callback.
 
     GitHub redirects here after a user installs or updates the app.
-    We fetch the installation details and store them.
+    We fetch the installation details and store them, linking the
+    installation to the TruJark user via the signed state token.
     """
+    # Decode the state token to find which user initiated this install.
+    # Missing/invalid state is allowed (e.g. user installs directly from
+    # the GitHub Marketplace), but the installation will be unclaimed
+    # until a user manually links it.
+    installer_user_sub: str | None = None
+    if state:
+        installer_user_sub = _decode_install_state_token(state)
+        if installer_user_sub is None:
+            logger.warning("Install state token invalid or expired", installation_id=installation_id)
+
     try:
         app_jwt = _generate_app_jwt()
 
@@ -180,9 +225,14 @@ async def setup_callback(
             existing.events = data.get("events")
             existing.is_active = True
             existing.suspended_at = None
+            # Only set user_id if not already linked (don't allow hijacking
+            # an installation already claimed by another user via a fresh state token).
+            if installer_user_sub and not existing.user_id:
+                existing.user_id = installer_user_sub
         else:
             installation = GitHubAppInstallation(
                 installation_id=installation_id,
+                user_id=installer_user_sub,
                 account_login=account["login"],
                 account_type=account["type"],
                 account_id=account["id"],
@@ -215,13 +265,23 @@ async def setup_callback(
 
 
 @router.get("/installations")
-async def list_installations(db: AsyncSession = Depends(get_db)):
-    """List all active GitHub App installations."""
-    result = await db.execute(
+async def list_installations(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List active GitHub App installations belonging to the current user.
+
+    Admins see all installations; regular users only see their own.
+    """
+    query = (
         select(GitHubAppInstallation)
         .where(GitHubAppInstallation.is_active == True)
         .order_by(GitHubAppInstallation.installed_at.desc())
     )
+    if user.get("role") != "admin":
+        query = query.where(GitHubAppInstallation.user_id == user["sub"])
+
+    result = await db.execute(query)
     installations = result.scalars().all()
 
     return {
@@ -251,8 +311,14 @@ async def list_installations(db: AsyncSession = Depends(get_db)):
 def _verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool:
     """Verify the webhook payload signature using HMAC-SHA256."""
     if not settings.github_app_webhook_secret:
-        logger.warning("Webhook secret not configured — skipping verification")
-        return True
+        # In development, allow unsigned webhooks for local testing.
+        # In any other environment, refuse — silently accepting forged
+        # webhooks would be a serious security hole for a public app.
+        if settings.environment == "development":
+            logger.warning("Webhook secret not configured — skipping verification (dev only)")
+            return True
+        logger.error("Webhook secret not configured in non-dev environment — rejecting")
+        return False
 
     if not signature_header:
         return False

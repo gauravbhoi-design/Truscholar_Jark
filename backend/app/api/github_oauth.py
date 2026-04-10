@@ -16,6 +16,7 @@ from app.api.auth import (
     exchange_code_for_token,
     fetch_github_user,
     get_current_user,
+    upsert_user_on_login,
 )
 from app.config import get_settings
 from app.models.database import CloudCredential, get_db
@@ -131,8 +132,14 @@ async def github_callback(
             return RedirectResponse(url=f"{frontend_url}/?github=connected")
 
         else:
-            # ─── Sign-in Flow: create JWT ───
-            jwt_token = create_jwt_token(user_data, github_access_token)
+            # ─── Sign-in Flow: persist user, create JWT ───
+            db_user = await upsert_user_on_login(user_data, db)
+            jwt_token = create_jwt_token(
+                user_data,
+                github_access_token,
+                db_id=str(db_user.id),
+                role=db_user.role,
+            )
             return RedirectResponse(url=f"{frontend_url}/?token={jwt_token}")
 
     except HTTPException:
@@ -152,6 +159,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         "email": user.get("email"),
         "avatar_url": user.get("avatar_url"),
         "role": user.get("role", "engineer"),
+        "db_id": user.get("db_id"),
     }
 
 
@@ -533,7 +541,19 @@ async def gcp_signin_callback(
             "orgs": [],
         }
 
-        jwt_token = create_jwt_token(user_data, github_access_token="")
+        # Persist user so cost tracking and the admin panel work
+        from app.models.database import async_session as _login_session
+        async with _login_session() as _login_db:
+            db_user = await upsert_user_on_login(user_data, _login_db)
+            db_user_id = str(db_user.id)
+            db_user_role = db_user.role
+
+        jwt_token = create_jwt_token(
+            user_data,
+            github_access_token="",
+            db_id=db_user_id,
+            role=db_user_role,
+        )
 
         # 4. If we got a refresh_token, store encrypted GCP credentials
         if refresh_token:
