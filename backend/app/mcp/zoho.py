@@ -8,14 +8,18 @@ from app.config import get_settings
 logger = structlog.get_logger()
 settings = get_settings()
 
-# Zoho Sprints REST API base. The UI lives at https://sprints.zoho.in/
-# but the REST API is on a separate host: https://sprintsapi.zoho.in/.
-# Using the UI host returns 404 with code 7404 "Given URL is wrong".
-# Can be overridden by ZOHO_SPRINTS_API_BASE env var if your account
-# lives in a different region (.com, .eu, .com.au, .jp).
+# Zoho Sprints REST API base. The UI and API share the same host —
+# https://sprints.zoho.in/zsapi/ (or .com / .eu etc for other regions).
+# The separate `sprintsapi.zoho.*` hostname is a red herring and
+# returns 404 for everything. Can be overridden via env var for
+# non-India accounts.
+#
+# IMPORTANT: every Zoho Sprints API call must include an `action`
+# query parameter (e.g. ?action=data). Without it Zoho returns
+# 7404 "Given URL is wrong" — this is easy to mistake for a bad path.
 ZOHO_SPRINTS_API = getattr(
     settings, "zoho_sprints_api_base", None
-) or "https://sprintsapi.zoho.in/zsapi"
+) or "https://sprints.zoho.in/zsapi"
 
 
 class ZohoSprintsMCPClient:
@@ -37,15 +41,25 @@ class ZohoSprintsMCPClient:
         }
         self.portal_name = portal_name
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict:
-        """Make authenticated request to Zoho Sprints API."""
+    async def _request(self, method: str, path: str, action: str = "data", **kwargs) -> dict:
+        """Make authenticated request to Zoho Sprints API.
+
+        Zoho Sprints uses an action-based API: every endpoint needs an
+        `action` query parameter. The most common value is `data` for
+        list/get operations. Caller can override via the `action` arg.
+        """
         url = f"{ZOHO_SPRINTS_API}{path}"
+        params = kwargs.pop("params", {}) or {}
+        if "action" not in params:
+            params["action"] = action
+
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.request(method, url, headers=self.headers, **kwargs)
+            resp = await client.request(method, url, headers=self.headers, params=params, **kwargs)
             logger.info(
                 "Zoho API call",
                 method=method,
                 path=path,
+                action=params.get("action"),
                 status=resp.status_code,
                 body_preview=resp.text[:300],
             )
@@ -81,7 +95,7 @@ class ZohoSprintsMCPClient:
 
     async def get_teams(self, portal_id: str) -> dict:
         """List all teams/projects in a portal."""
-        data = await self._request("GET", f"/portals/{portal_id}/teams/")
+        data = await self._request("GET", f"/portals/{portal_id}/team/")
         if "error" in data:
             return data
         teams = data.get("teams", [])
@@ -101,7 +115,7 @@ class ZohoSprintsMCPClient:
 
     async def get_sprints(self, portal_id: str, team_id: str) -> dict:
         """List sprints for a team."""
-        data = await self._request("GET", f"/portals/{portal_id}/teams/{team_id}/sprints/")
+        data = await self._request("GET", f"/portals/{portal_id}/team/{team_id}/sprints/")
         if "error" in data:
             return data
         sprints = data.get("sprints", [])
@@ -182,7 +196,7 @@ class ZohoSprintsMCPClient:
         """Get all items in a sprint with status breakdown."""
         data = await self._request(
             "GET",
-            f"/portals/{portal_id}/teams/{team_id}/sprints/{sprint_id}/items/",
+            f"/portals/{portal_id}/team/{team_id}/sprints/{sprint_id}/items/",
         )
         if "error" in data:
             return data
@@ -219,7 +233,7 @@ class ZohoSprintsMCPClient:
         """Get backlog items."""
         data = await self._request(
             "GET",
-            f"/portals/{portal_id}/teams/{team_id}/backlog/",
+            f"/portals/{portal_id}/team/{team_id}/backlog/",
         )
         if "error" in data:
             return data
@@ -245,7 +259,7 @@ class ZohoSprintsMCPClient:
         """Get team members."""
         data = await self._request(
             "GET",
-            f"/portals/{portal_id}/teams/{team_id}/members/",
+            f"/portals/{portal_id}/team/{team_id}/members/",
         )
         if "error" in data:
             return data

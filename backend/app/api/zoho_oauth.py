@@ -327,20 +327,22 @@ async def zoho_debug(
     probe_results = []
     working_base = None
 
+    # Zoho Sprints requires ?action=<name> on every call. Without it,
+    # Zoho returns 7404 "Given URL is wrong" even for correct paths.
     async with httpx.AsyncClient(timeout=8) as http:
         for host in hosts:
             for prefix in path_prefixes:
                 for suffix in endpoint_suffixes:
                     url = f"{host}{prefix}{suffix}"
                     try:
-                        resp = await http.get(url, headers=headers)
+                        resp = await http.get(url, headers=headers, params={"action": "data"})
                     except Exception as e:
                         probe_results.append({"url": url, "error": str(e)[:150]})
                         continue
 
                     body = resp.text[:150]
                     probe_results.append({
-                        "url": url,
+                        "url": f"{url}?action=data",
                         "status": resp.status_code,
                         "body": body,
                     })
