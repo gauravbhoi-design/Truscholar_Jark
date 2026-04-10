@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     environment: str = "development"
+    enable_api_docs: bool = False  # Expose Swagger UI / ReDoc even when debug is off
+    docs_username: str = ""        # If set with docs_password, basic-auth-gates the docs
+    docs_password: str = ""
 
     # ─── API ────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"

@@ -1,8 +1,10 @@
+import secrets
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from prometheus_client import make_asgi_app
 
 from app.api.routes import router as api_router
@@ -75,8 +77,9 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     lifespan=lifespan,
-    docs_url="/api/docs" if settings.debug else None,
-    redoc_url="/api/redoc" if settings.debug else None,
+    docs_url="/api/docs" if (settings.debug or settings.enable_api_docs) else None,
+    redoc_url="/api/redoc" if (settings.debug or settings.enable_api_docs) else None,
+    openapi_url="/api/openapi.json" if (settings.debug or settings.enable_api_docs) else None,
 )
 
 # ─── Middleware ──────────────────────────────────────────────────────────────
@@ -97,6 +100,44 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# ─── Docs Basic-Auth Gate ───────────────────────────────────────────────────
+#
+# When docs_username + docs_password are configured, the Swagger UI, ReDoc,
+# and OpenAPI JSON endpoints are gated behind HTTP Basic auth so the API
+# surface isn't browsable by anonymous visitors. Leave both blank in dev to
+# expose the docs unauthenticated.
+
+_DOC_PATHS = ("/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect")
+
+
+@app.middleware("http")
+async def _docs_basic_auth(request: Request, call_next):
+    if not (settings.docs_username and settings.docs_password):
+        return await call_next(request)
+
+    if not any(request.url.path == p or request.url.path.startswith(p + "/") for p in _DOC_PATHS):
+        return await call_next(request)
+
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Basic "):
+        import base64
+        try:
+            decoded = base64.b64decode(auth[6:]).decode("utf-8")
+            user, _, pw = decoded.partition(":")
+            if (
+                secrets.compare_digest(user, settings.docs_username)
+                and secrets.compare_digest(pw, settings.docs_password)
+            ):
+                return await call_next(request)
+        except Exception:
+            pass
+
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="API Docs"'},
+    )
+
 
 # ─── Prometheus Metrics ─────────────────────────────────────────────────────
 
