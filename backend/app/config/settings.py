@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
+    # ─── GitHub App ──────────────────────────────────────────────────
+    github_app_id: str = ""                    # GitHub App ID (numeric)
+    github_app_private_key: str = ""           # PEM private key (newlines as \n)
+    github_app_private_key_path: str = ""      # Or path to .pem file
+    github_app_webhook_secret: str = ""        # Webhook secret for signature verification
+    github_app_name: str = ""                  # GitHub App slug (for install URLs)
+    github_app_client_id: str = ""             # GitHub App OAuth client ID
+    github_app_client_secret: str = ""         # GitHub App OAuth client secret
+
     # ─── Claude / Anthropic via Vertex AI ──────────────────────────────
     anthropic_api_key: str = ""  # Only needed for direct Anthropic API
     claude_model: str = "claude-opus-4-6"  # Vertex AI model ID for Opus 4.6
@@ -138,6 +147,26 @@ class Settings(BaseSettings):
         if self.cloud_run_url:
             return f"{self.cloud_run_url}/api/v1/auth/gcp/signin/callback"
         return self.gcp_signin_redirect_uri
+
+    @property
+    def effective_github_app_callback_url(self) -> str:
+        base = self.cloud_run_url or "http://localhost:8000"
+        return f"{base}/api/v1/github-app/callback"
+
+    @property
+    def effective_github_app_setup_url(self) -> str:
+        base = self.cloud_run_url or "http://localhost:8000"
+        return f"{base}/api/v1/github-app/setup"
+
+    @property
+    def github_app_private_key_content(self) -> str:
+        """Load GitHub App private key from env var or file."""
+        if self.github_app_private_key:
+            return self.github_app_private_key.replace("\\n", "\n")
+        if self.github_app_private_key_path:
+            with open(self.github_app_private_key_path) as f:
+                return f.read()
+        return ""
 
     @property
     def effective_zoho_redirect_uri(self) -> str:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Github, ArrowRight, Shield, Bot, Activity, Cloud } from "lucide-react";
+import { Github, ArrowRight, Shield, Bot, Activity, Cloud, Package } from "lucide-react";
 import { getGitHubLoginUrl, getGcpLoginUrl, getToken, fetchCurrentUser, fetchGcpProjects, selectGcpProject, type AuthUser } from "@/lib/auth";
 import Dashboard from "@/components/dashboard/Dashboard";
 
@@ -174,12 +174,28 @@ function GcpProjectSelector({ onDone }: { onDone: () => void }) {
 }
 
 function LoginPage({ loginUrl, gcpLoginUrl }: { loginUrl: string; gcpLoginUrl: string }) {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+
   const handleGitHubLogin = () => {
     if (loginUrl) window.location.href = loginUrl;
   };
 
   const handleGcpLogin = () => {
     if (gcpLoginUrl) window.location.href = gcpLoginUrl;
+  };
+
+  const handleInstallApp = async () => {
+    try {
+      const res = await fetch(`${API_URL}/github-app/install`);
+      if (res.ok) {
+        const data = await res.json();
+        window.location.href = data.install_url;
+      } else {
+        alert("GitHub App not configured on the server");
+      }
+    } catch {
+      alert("Backend not available");
+    }
   };
 
   return (
@@ -227,12 +243,30 @@ function LoginPage({ loginUrl, gcpLoginUrl }: { loginUrl: string; gcpLoginUrl: s
               Sign in with GCP
               <ArrowRight className="h-4 w-4" />
             </button>
+
+            {/* Divider */}
+            <div className="w-72 flex items-center gap-3 my-1">
+              <div className="flex-1 border-t" />
+              <span className="text-[10px] text-muted-foreground uppercase">or</span>
+              <div className="flex-1 border-t" />
+            </div>
+
+            <button
+              onClick={handleInstallApp}
+              className="w-72 inline-flex items-center justify-center gap-3 px-6 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-medium transition-colors"
+            >
+              <Package className="h-5 w-5" />
+              Install GitHub App
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
 
           <p className="text-xs text-muted-foreground mt-4">
             <strong>GitHub:</strong> Access your repositories for code analysis.
             <br />
             <strong>GCP:</strong> Access your cloud projects for monitoring & debugging.
+            <br />
+            <strong>GitHub App:</strong> Install on your org for webhooks & fine-grained access.
           </p>
 
           {/* Features */}

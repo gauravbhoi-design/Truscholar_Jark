@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user, require_role
 from app.api.gcp_oauth import router as gcp_oauth_router
+from app.api.github_app import router as github_app_router
 from app.api.github_oauth import router as github_oauth_router
 from app.api.metrics_routes import router as metrics_router
 from app.api.zoho_oauth import router as zoho_oauth_router
@@ -36,6 +37,7 @@ router.include_router(github_oauth_router)
 router.include_router(gcp_oauth_router)
 router.include_router(zoho_oauth_router)
 router.include_router(metrics_router)
+router.include_router(github_app_router)
 
 
 # ─── Agent Endpoints ────────────────────────────────────────────────────────

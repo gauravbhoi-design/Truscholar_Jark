@@ -15,6 +15,8 @@ import {
   Eye,
   EyeOff,
   GitBranch,
+  Package,
+  Webhook,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -560,6 +562,157 @@ function GitHubConnectionCard() {
   );
 }
 
+interface GitHubAppInstallation {
+  installation_id: number;
+  account_login: string;
+  account_type: string;
+  account_avatar_url?: string;
+  repository_selection: string;
+  installed_at: string;
+  is_active: boolean;
+}
+
+function GitHubAppCard() {
+  const [installations, setInstallations] = useState<GitHubAppInstallation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadInstallations = async () => {
+    try {
+      const res = await fetch(`${API_URL}/github-app/installations`);
+      if (res.ok) {
+        const data = await res.json();
+        setInstallations(data.installations || []);
+      }
+    } catch {
+      setError("Failed to load installations");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInstallations();
+  }, []);
+
+  const handleInstall = async () => {
+    setInstalling(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/github-app/install`);
+      if (res.ok) {
+        const data = await res.json();
+        // Open in new tab so user keeps the dashboard
+        window.open(data.install_url, "_blank", "noopener,noreferrer");
+      } else {
+        const err = await res.json();
+        setError(err.detail || "GitHub App not configured on the server");
+      }
+    } catch {
+      setError("Backend not available");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="border rounded-lg p-6 bg-card flex items-center justify-center h-32">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const hasInstallations = installations.length > 0;
+
+  return (
+    <div className="border rounded-lg bg-card overflow-hidden">
+      <div className="flex items-center gap-3 p-4 border-b bg-muted/30">
+        <Package className="h-5 w-5 text-purple-500" />
+        <div>
+          <h3 className="font-medium text-sm">GitHub App</h3>
+          <p className="text-xs text-muted-foreground">
+            Install the GitHub App for fine-grained permissions, webhooks, and per-org access
+          </p>
+        </div>
+        {hasInstallations ? (
+          <span className="ml-auto flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-1 rounded-full">
+            <CheckCircle2 className="h-3 w-3" /> {installations.length} installed
+          </span>
+        ) : (
+          <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+            <XCircle className="h-3 w-3" /> Not installed
+          </span>
+        )}
+      </div>
+
+      <div className="p-4">
+        {hasInstallations && (
+          <div className="space-y-2 mb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Active Installations</p>
+            {installations.map((inst) => (
+              <div
+                key={inst.installation_id}
+                className="flex items-center gap-3 p-3 rounded-md border bg-muted/20"
+              >
+                {inst.account_avatar_url && (
+                  <img
+                    src={inst.account_avatar_url}
+                    alt={inst.account_login}
+                    className="h-8 w-8 rounded-full"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{inst.account_login}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {inst.account_type} · {inst.repository_selection === "all" ? "All repos" : "Selected repos"}
+                  </p>
+                </div>
+                <a
+                  href={`https://github.com/settings/installations/${inst.installation_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Manage <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!hasInstallations && (
+          <p className="text-xs text-muted-foreground mb-4">
+            Install the GitHub App on your organization or personal account to enable webhook events
+            (pushes, PRs, workflow runs) and granular per-repo access without sharing personal tokens.
+          </p>
+        )}
+
+        <button
+          onClick={handleInstall}
+          disabled={installing}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors"
+        >
+          {installing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+          {hasInstallations ? "Install on another account" : "Install GitHub App"}
+        </button>
+
+        {hasInstallations && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <Webhook className="h-3 w-3" />
+            <span>Webhooks active — events flow to your dashboard automatically</span>
+          </div>
+        )}
+
+        {error && (
+          <p className="mt-2 text-xs text-destructive">{error}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ZohoConnectionCard() {
   const [status, setStatus] = useState<{ connected: boolean; email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -675,6 +828,7 @@ export function SettingsPanel() {
           </h3>
           <div className="space-y-4">
             <GitHubConnectionCard />
+            <GitHubAppCard />
             <GCPConnectionCard />
             <ZohoConnectionCard />
           </div>

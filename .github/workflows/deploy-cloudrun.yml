@@ -130,6 +130,16 @@ jobs:
             --role="roles/secretmanager.secretAccessor" --quiet 2>/dev/null || true
           rm /tmp/vertex-sa.json
 
+      - name: Upload GitHub App private key to Secret Manager
+        run: |
+          printf '%s' '${{ secrets.GH_APP_PRIVATE_KEY }}' > /tmp/github-app-key.pem
+          gcloud secrets create github-app-private-key --replication-policy=automatic 2>/dev/null || true
+          gcloud secrets versions add github-app-private-key --data-file=/tmp/github-app-key.pem
+          gcloud secrets add-iam-policy-binding github-app-private-key \
+            --member="serviceAccount:${{ env.SA_EMAIL }}" \
+            --role="roles/secretmanager.secretAccessor" --quiet 2>/dev/null || true
+          rm /tmp/github-app-key.pem
+
   # ─── Step 2: Build & Push Docker Images ──────────────────────────────
   build:
     name: Build & Push Docker Images
@@ -245,8 +255,14 @@ jobs:
           GCP_OAUTH_CLIENT_SECRET=${{ secrets.GCP_OAUTH_CLIENT_SECRET }},\
           CREDENTIALS_ENCRYPTION_KEY=${{ secrets.CREDENTIALS_ENCRYPTION_KEY }},\
           ZOHO_CLIENT_ID=${{ secrets.ZOHO_CLIENT_ID }},\
-          ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }}" \
-            --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest" \
+          ZOHO_CLIENT_SECRET=${{ secrets.ZOHO_CLIENT_SECRET }},\
+          GITHUB_APP_ID=${{ secrets.GH_APP_ID }},\
+          GITHUB_APP_NAME=${{ secrets.GH_APP_NAME }},\
+          GITHUB_APP_CLIENT_ID=${{ secrets.GH_APP_CLIENT_ID }},\
+          GITHUB_APP_CLIENT_SECRET=${{ secrets.GH_APP_CLIENT_SECRET }},\
+          GITHUB_APP_WEBHOOK_SECRET=${{ secrets.GH_APP_WEBHOOK_SECRET }},\
+          GITHUB_APP_PRIVATE_KEY_PATH=/secrets/github-app-private-key" \
+            --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest,/secrets/github-app-private-key=github-app-private-key:latest" \
             --service-account ${{ env.SA_EMAIL }}
 
       - name: Get API URL

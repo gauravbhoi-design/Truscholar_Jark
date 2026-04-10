@@ -163,6 +163,43 @@ class PlanStep(Base):
     plan: Mapped["Plan"] = relationship(back_populates="steps")
 
 
+class GitHubAppInstallation(Base):
+    """Tracks GitHub App installations on orgs/users."""
+    __tablename__ = "github_app_installations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    installation_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, index=True)
+    account_login: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # org or user login
+    account_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "Organization" or "User"
+    account_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    account_avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    target_type: Mapped[str] = mapped_column(String(50), default="all")  # "all" or "selected"
+    repository_selection: Mapped[str] = mapped_column(String(50), default="all")  # "all" or "selected"
+    selected_repositories: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # list of repo full_names
+    permissions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # granted permissions
+    events: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # subscribed events
+    sender_login: Mapped[str | None] = mapped_column(String(255), nullable=True)  # who installed it
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    installed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class WebhookEvent(Base):
+    """Log of incoming GitHub webhook events for audit and debugging."""
+    __tablename__ = "webhook_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # push, pull_request, etc.
+    action: Mapped[str | None] = mapped_column(String(100), nullable=True)  # opened, closed, etc.
+    installation_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    repository: Mapped[str | None] = mapped_column(String(255), nullable=True)  # owner/repo
+    sender: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payload_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # key fields from payload
+    processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
 

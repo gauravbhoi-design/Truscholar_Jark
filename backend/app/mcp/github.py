@@ -14,8 +14,13 @@ GITHUB_API = "https://api.github.com"
 class GitHubMCPClient:
     """MCP-compatible client for GitHub operations.
 
-    Uses per-user OAuth tokens when available (from GitHub sign-in),
-    falls back to the global token from settings.
+    Supports three token sources (in priority order):
+    1. GitHub App installation token (per-org, fine-grained permissions)
+    2. Per-user OAuth token (from GitHub sign-in)
+    3. Global fallback token from settings
+
+    Use `from_installation()` classmethod to create a client backed by a
+    GitHub App installation token.
     """
 
     def __init__(self, user_token: str | None = None):
@@ -24,11 +29,39 @@ class GitHubMCPClient:
             raise ValueError(
                 "No GitHub token available. Please sign in with GitHub to authorize repository access."
             )
+        self._token = token
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github.v3+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+
+    @classmethod
+    async def from_installation(cls, installation_id: int) -> "GitHubMCPClient":
+        """Create a client using a GitHub App installation access token."""
+        from app.api.github_app import get_installation_access_token
+
+        token_data = await get_installation_access_token(installation_id)
+        return cls(user_token=token_data["token"])
+
+    @classmethod
+    async def from_repo(cls, repo_full_name: str, db, user_token: str | None = None) -> "GitHubMCPClient":
+        """Create a client for a specific repo.
+
+        Tries GitHub App installation token first (if app is installed on the repo's org),
+        then falls back to user token.
+        """
+        from app.api.github_app import get_installation_token_for_repo
+
+        try:
+            install_token = await get_installation_token_for_repo(repo_full_name, db)
+            if install_token:
+                logger.debug("Using GitHub App installation token", repo=repo_full_name)
+                return cls(user_token=install_token)
+        except Exception as e:
+            logger.debug("GitHub App token unavailable, falling back to user token", error=str(e))
+
+        return cls(user_token=user_token)
 
     async def _request(self, method: str, path: str, **kwargs):
         async with httpx.AsyncClient(timeout=30) as client:
