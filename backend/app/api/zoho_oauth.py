@@ -276,27 +276,78 @@ async def zoho_debug(
     """Diagnostic endpoint that walks the full chain (portals → teams →
     sprints) and reports each step's raw result so we can see exactly
     where Zoho integration is failing.
+
+    Also probes several candidate Zoho REST API base URLs to find one
+    that responds correctly — useful when an account lives in a region
+    other than the configured default.
     """
+    import httpx
+
     user_id = user.get("sub", user.get("login", ""))
     token = await get_zoho_access_token(user_id, db)
     if not token:
         return {"step": "token", "ok": False, "error": "Zoho not connected"}
 
+    # ── First: probe candidate bases to find one that returns 200 ──
+    candidates = [
+        "https://sprintsapi.zoho.in/zsapi",
+        "https://sprintsapi.zoho.com/zsapi",
+        "https://sprintsapi.zoho.eu/zsapi",
+        "https://sprintsapi.zoho.com.au/zsapi",
+        "https://sprintsapi.zoho.jp/zsapi",
+        "https://sprints.zoho.in/zsapi",  # legacy / what we had before
+    ]
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    probe_results = []
+    working_base = None
+    async with httpx.AsyncClient(timeout=10) as http:
+        for base in candidates:
+            try:
+                resp = await http.get(f"{base}/portals/", headers=headers)
+                probe_results.append({
+                    "base": base,
+                    "status": resp.status_code,
+                    "body_preview": resp.text[:200],
+                })
+                if resp.status_code == 200 and not working_base:
+                    working_base = base
+            except Exception as e:
+                probe_results.append({"base": base, "error": str(e)[:200]})
+
+    # ── Then: walk the chain on the working base (or configured one) ──
     from app.mcp.zoho import ZohoSprintsMCPClient
     client = ZohoSprintsMCPClient(access_token=token)
+    if working_base:
+        # Override the instance base for this single diagnostic walk
+        import app.mcp.zoho as zmod
+        original_base = zmod.ZOHO_SPRINTS_API
+        zmod.ZOHO_SPRINTS_API = working_base
+        try:
+            portals = await client.get_portals()
+        finally:
+            zmod.ZOHO_SPRINTS_API = original_base
+    else:
+        portals = await client.get_portals()
 
-    portals = await client.get_portals()
+    chain: dict = {
+        "configured_base": settings.zoho_sprints_api_base,
+        "working_base": working_base,
+        "probe_results": probe_results,
+    }
+
     if "error" in portals or not portals.get("portals"):
-        return {"step": "portals", "ok": False, "result": portals}
+        chain.update({"step": "portals", "ok": False, "result": portals})
+        return chain
 
     portal_id = portals["portals"][0]["id"]
     teams = await client.get_teams(portal_id)
     if "error" in teams or not teams.get("teams"):
-        return {"step": "teams", "ok": False, "portal_id": portal_id, "result": teams}
+        chain.update({"step": "teams", "ok": False, "portal_id": portal_id, "result": teams})
+        return chain
 
     team_id = teams["teams"][0]["id"]
     sprints = await client.get_sprints(portal_id, team_id)
-    return {
+    chain.update({
         "step": "sprints",
         "ok": True,
         "portal_id": portal_id,
@@ -306,5 +357,5 @@ async def zoho_debug(
         "sprints_count": len(sprints.get("sprints", [])),
         "sprint_statuses": [s.get("status") for s in sprints.get("sprints", [])][:20],
         "first_sprint": sprints.get("sprints", [{}])[0] if sprints.get("sprints") else None,
-        "raw": sprints,
-    }
+    })
+    return chain

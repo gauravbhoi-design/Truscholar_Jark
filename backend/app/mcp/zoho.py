@@ -8,7 +8,14 @@ from app.config import get_settings
 logger = structlog.get_logger()
 settings = get_settings()
 
-ZOHO_SPRINTS_API = "https://sprints.zoho.in/zsapi"
+# Zoho Sprints REST API base. The UI lives at https://sprints.zoho.in/
+# but the REST API is on a separate host: https://sprintsapi.zoho.in/.
+# Using the UI host returns 404 with code 7404 "Given URL is wrong".
+# Can be overridden by ZOHO_SPRINTS_API_BASE env var if your account
+# lives in a different region (.com, .eu, .com.au, .jp).
+ZOHO_SPRINTS_API = getattr(
+    settings, "zoho_sprints_api_base", None
+) or "https://sprintsapi.zoho.in/zsapi"
 
 
 class ZohoSprintsMCPClient:

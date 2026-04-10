@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     zoho_client_id: str = ""
     zoho_client_secret: str = ""
     zoho_redirect_uri: str = "http://localhost:8000/api/v1/auth/zoho/callback"
+    # Override per region: .com, .eu, .com.au, .jp. India accounts use .in.
+    zoho_sprints_api_base: str = "https://sprintsapi.zoho.in/zsapi"
 
     # ─── Credential Encryption ────────────────────────────────────────
     credentials_encryption_key: str = ""  # Base64-encoded 32-byte key for AES-256-GCM
