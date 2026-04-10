@@ -286,23 +286,43 @@ async def zoho_debug_exact(
     if not token:
         return {"error": "Zoho not connected"}
 
+    # We confirmed Bearer works; skip the other variants to keep
+    # this probe fast (was 18 attempts, now 1 per URL).
     headers_variants = {
-        "Zoho-oauthtoken": {"Authorization": f"Zoho-oauthtoken {token}"},
         "Bearer": {"Authorization": f"Bearer {token}"},
-        "Zoho-authtoken": {"Authorization": f"Zoho-authtoken {token}"},  # legacy
     }
 
     # Three candidate URLs of increasing specificity.
     # 1. The exact URL from the user's DevTools capture.
     # 2. A simpler team-level URL.
     # 3. A top-level portals URL that Zoho's legacy API docs mention.
+    # We know from the previous probe that OAuth works on
+    # /zsapi/team/{team_id}/... paths. Now hunt for the sprint-list
+    # and project-list endpoints using the known team_id.
+    TEAM_ID = "60009511678"
+    PROJECT_ID = "16176000000006001"
+    base = "https://sprints.zoho.in/zsapi"
     urls = [
-        "https://sprints.zoho.in/zsapi/team/60009511678/projects/16176000000006001/priority/?action=data&index=1&range=250",
-        "https://sprints.zoho.in/zsapi/team/60009511678/settings/?action=banners",
-        "https://sprints.zoho.in/zsapi/team/?action=data",
-        "https://sprints.zoho.in/zsapi/portals/?action=data",
-        "https://sprints.zoho.in/zsapi/myteam/?action=data",
-        "https://sprints.zoho.in/zsapi/teams/?action=data",
+        # Known-good reference (should return 200)
+        f"{base}/team/{TEAM_ID}/projects/{PROJECT_ID}/priority/?action=data&index=1&range=250",
+        # Candidates for listing projects in a team
+        f"{base}/team/{TEAM_ID}/projects/?action=data&index=1&range=250",
+        f"{base}/team/{TEAM_ID}/projects/?action=data",
+        f"{base}/team/{TEAM_ID}/projects/?action=allprojects",
+        f"{base}/team/{TEAM_ID}/project/?action=data",
+        # Candidates for listing sprints in a project
+        f"{base}/team/{TEAM_ID}/projects/{PROJECT_ID}/sprints/?action=data&index=1&range=250",
+        f"{base}/team/{TEAM_ID}/projects/{PROJECT_ID}/sprints/?action=data",
+        f"{base}/team/{TEAM_ID}/projects/{PROJECT_ID}/sprints/?action=allsprints",
+        f"{base}/team/{TEAM_ID}/projects/{PROJECT_ID}/sprint/?action=data",
+        # Candidates for listing items in a sprint (need a sprint ID, unknown)
+        # Skip — we'll add once we know sprint IDs
+        # Candidates for bootstrapping (list of teams / workspaces the user has)
+        f"{base}/user/?action=data",
+        f"{base}/me/?action=data",
+        f"{base}/profile/?action=data",
+        f"{base}/workspace/?action=data",
+        f"{base}/home/?action=data",
     ]
 
     results = []
