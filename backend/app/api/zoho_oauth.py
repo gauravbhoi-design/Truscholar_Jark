@@ -312,10 +312,15 @@ async def zoho_debug(
         "/sprints/v1",
         "",  # no prefix
     ]
-    # Also try a couple of endpoint shapes under each prefix
+    # Endpoint shapes under each prefix. Zoho Sprints' UI calls them
+    # "Projects" now (v2), so try both the old `portals`/`teams` terms
+    # and the new `projects` term.
     endpoint_suffixes = [
         "/portals/",
+        "/projects/",
+        "/teams/",
         "/portals",
+        "/projects",
     ]
 
     headers = {"Authorization": f"Zoho-oauthtoken {token}", "Content-Type": "application/json"}
