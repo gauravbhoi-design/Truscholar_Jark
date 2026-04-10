@@ -37,7 +37,7 @@ Output format:
 - **Recommendation**: Revert, hotfix, or investigate further"""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "get_commit_history",
@@ -123,4 +123,4 @@ Output format:
                 pr_number=tool_input["pr_number"],
             )
 
-        return {"error": f"Unknown tool: {tool_name}"}
+        return await super()._execute_tool(tool_name, tool_input)

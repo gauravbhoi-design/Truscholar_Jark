@@ -40,7 +40,7 @@ Always output structured analysis with:
 - **Prevention**: How to prevent recurrence"""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "query_cloudwatch_logs",
@@ -297,13 +297,8 @@ Always output structured analysis with:
             )
 
         elif tool_name == "run_command":
-            from app.mcp.terminal import TerminalMCPClient
-            user = getattr(self, "_current_user", None) or {}
-            terminal = TerminalMCPClient(gcp_access_token=user.get("gcp_access_token"))
-            return await terminal.execute(
-                command=tool_input["command"],
-                cwd=tool_input.get("cwd"),
-                timeout=min(tool_input.get("timeout", 30), 120),
-            )
+            # Legacy alias for run_shell — kept so older plans still work.
+            return await self._run_shell(tool_input)
 
-        return {"error": f"Unknown tool: {tool_name}"}
+        # Fall through to base class for run_shell and any other shared tools
+        return await super()._execute_tool(tool_name, tool_input)

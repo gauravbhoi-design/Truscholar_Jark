@@ -28,11 +28,11 @@ BLOCKED_COMMANDS = {
 # Only these command prefixes are allowed
 ALLOWED_COMMANDS = [
     "ls", "cat", "head", "tail", "grep", "find", "wc", "sort", "uniq",
-    "git", "docker", "kubectl", "gcloud", "terraform",
-    "npm", "node", "python", "pip", "pytest",
-    "curl", "wget",
+    "git", "gh", "docker", "kubectl", "gcloud", "gsutil", "terraform",
+    "npm", "node", "python", "python3", "pip", "pytest",
+    "curl", "wget", "jq",
     "df", "du", "free", "top", "uptime", "whoami", "hostname", "uname",
-    "echo", "date", "env", "printenv",
+    "echo", "date", "env", "printenv", "pwd",
     "psql", "redis-cli", "mongosh", "mongo",
     "ruff", "mypy", "eslint", "tsc",
     "ping", "nslookup", "dig", "traceroute", "netstat", "ss",
@@ -60,19 +60,45 @@ class TerminalMCPClient:
     """MCP-compatible client for executing CLI commands with safety guardrails.
 
     Agents use this to run diagnostics, check container status, view logs,
-    and interact with Docker containers.
+    and interact with Docker containers — and to drive `gh` / `gcloud` /
+    `kubectl` for any operation that no specialized MCP tool covers.
+
+    Per-session workdir tracking lets a sequence of commands feel like an
+    interactive shell: `cd ./repo` followed by `ls` runs `ls` inside `./repo`.
 
     Args:
         working_dir: Default working directory for commands.
         timeout: Default timeout in seconds.
-        gcp_access_token: User's OAuth access token for gcloud CLI commands.
-            When set, gcloud commands run as the user (not the service account).
+        gcp_access_token: User's OAuth access token for gcloud commands.
+            When set, gcloud runs as the user (not the service account).
+        github_token: User's GitHub PAT or installation token. When set,
+            it's exported as both GITHUB_TOKEN and GH_TOKEN so `gh` and
+            `git` commands authenticate as the user.
+        gcp_project_id: Default GCP project for gcloud (CLOUDSDK_CORE_PROJECT).
+        session_id: When set, workdir mutations persist across calls so
+            `cd subdir` followed by `ls` works as expected.
     """
 
-    def __init__(self, working_dir: str | None = None, timeout: int = DEFAULT_TIMEOUT, gcp_access_token: str | None = None):
+    # Class-level workdir cache keyed by session_id. Process-local — fine
+    # for single-instance Cloud Run; for multi-instance we'd push this to
+    # Redis. Each entry is just a path string.
+    _session_workdirs: dict[str, str] = {}
+
+    def __init__(
+        self,
+        working_dir: str | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
+        gcp_access_token: str | None = None,
+        github_token: str | None = None,
+        gcp_project_id: str | None = None,
+        session_id: str | None = None,
+    ):
         self.working_dir = working_dir
         self.timeout = timeout
         self.gcp_access_token = gcp_access_token
+        self.github_token = github_token
+        self.gcp_project_id = gcp_project_id
+        self.session_id = session_id
 
     def _is_command_allowed(self, command: str) -> tuple[bool, str]:
         """Check if a command is safe to execute."""
@@ -116,16 +142,57 @@ class TerminalMCPClient:
 
         return True, "OK"
 
+    def _resolve_session_cwd(self, override: str | None) -> str | None:
+        """Compute the effective cwd for a call, honoring session state."""
+        if override:
+            return override
+        if self.session_id and self.session_id in self._session_workdirs:
+            return self._session_workdirs[self.session_id]
+        return self.working_dir
+
+    def _track_cd(self, command: str, current_cwd: str | None) -> None:
+        """If the command was a successful `cd`, update session workdir.
+
+        Parses locally — never re-executes, never trusts the shell.
+        """
+        if not self.session_id:
+            return
+
+        import os
+        import re
+
+        # Find any `cd <target>` segments in the command
+        targets = re.findall(r"(?:^|;|&&|\|\|)\s*cd\s+([^\s;&|]+)", command)
+        if not targets:
+            return
+
+        wd = current_cwd or os.getcwd()
+        for target in targets:
+            target = target.strip().strip("'\"")
+            if not target or target == ".":
+                continue
+            if target == "~":
+                wd = os.path.expanduser("~")
+            elif target.startswith("/"):
+                wd = target
+            elif target == "..":
+                wd = os.path.dirname(wd.rstrip("/")) or "/"
+            else:
+                wd = os.path.normpath(os.path.join(wd, target))
+
+        self._session_workdirs[self.session_id] = wd
+        logger.info("Session workdir updated", session=self.session_id, cwd=wd)
+
     async def execute(self, command: str, timeout: int | None = None, cwd: str | None = None) -> dict:
         """Execute a CLI command and return output.
 
         Args:
             command: Shell command to execute
             timeout: Max seconds to wait (default 30)
-            cwd: Working directory
+            cwd: Working directory (overrides session workdir for this call)
         """
         effective_timeout = timeout or self.timeout
-        effective_cwd = cwd or self.working_dir
+        effective_cwd = self._resolve_session_cwd(cwd)
 
         # Safety check
         allowed, reason = self._is_command_allowed(command)
@@ -133,13 +200,23 @@ class TerminalMCPClient:
             logger.warning("Command blocked", command=command[:100], reason=reason)
             return {"error": reason, "exit_code": -1, "stdout": "", "stderr": reason}
 
-        logger.info("Executing command", command=command[:100], cwd=effective_cwd)
+        logger.info("Executing command", command=command[:100], cwd=effective_cwd, session=self.session_id)
 
-        # Inject user's GCP token for gcloud commands so they run as the user
+        # Build per-call env: inherit, then layer in user-scoped credentials
+        # so gh/gcloud authenticate as the requesting user, not the service account.
         import os
         env = os.environ.copy()
-        if self.gcp_access_token and command.strip().startswith("gcloud"):
+        cmd_stripped = command.strip()
+
+        if self.gcp_access_token and cmd_stripped.startswith(("gcloud", "gsutil")):
             env["CLOUDSDK_AUTH_ACCESS_TOKEN"] = self.gcp_access_token
+        if self.gcp_project_id:
+            env["CLOUDSDK_CORE_PROJECT"] = self.gcp_project_id
+
+        if self.github_token and cmd_stripped.startswith(("gh", "git")):
+            # gh reads GH_TOKEN, git reads GITHUB_TOKEN via credential helper.
+            env["GH_TOKEN"] = self.github_token
+            env["GITHUB_TOKEN"] = self.github_token
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -157,11 +234,16 @@ class TerminalMCPClient:
             stdout_str = stdout.decode("utf-8", errors="replace")[:MAX_OUTPUT_LENGTH]
             stderr_str = stderr.decode("utf-8", errors="replace")[:MAX_OUTPUT_LENGTH]
 
+            # Track cd mutations only on successful commands
+            if proc.returncode == 0:
+                self._track_cd(command, effective_cwd)
+
             return {
                 "exit_code": proc.returncode,
                 "stdout": stdout_str,
                 "stderr": stderr_str,
                 "command": command,
+                "cwd": effective_cwd,
                 "truncated": len(stdout) > MAX_OUTPUT_LENGTH or len(stderr) > MAX_OUTPUT_LENGTH,
             }
 
@@ -176,6 +258,11 @@ class TerminalMCPClient:
         except Exception as e:
             logger.error("Command execution failed", command=command[:100], error=str(e))
             return {"error": str(e), "exit_code": -1, "stdout": "", "stderr": str(e), "command": command}
+
+    @classmethod
+    def reset_session(cls, session_id: str) -> None:
+        """Drop a session's workdir state (call when a task ends)."""
+        cls._session_workdirs.pop(session_id, None)
 
     # ─── Docker Convenience Methods ────────────────────────────────────
 

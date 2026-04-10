@@ -37,7 +37,7 @@ Output format:
 - **Best Practices**: Recommendations for improvement"""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "validate_dockerfile",
@@ -211,7 +211,7 @@ Output format:
                 container=tool_input.get("container"),
             )
 
-        return {"error": f"Unknown tool: {tool_name}"}
+        return await super()._execute_tool(tool_name, tool_input)
 
     def _validate_dockerfile(self, content: str) -> dict:
         """In-process Dockerfile validation."""

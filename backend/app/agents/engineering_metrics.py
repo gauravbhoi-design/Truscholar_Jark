@@ -55,7 +55,7 @@ DORA 2025 Benchmarks:
 When presenting results, use clear formatting with tier badges, trend indicators, and actionable recommendations."""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "get_dora_metrics",
@@ -210,7 +210,7 @@ When presenting results, use clear formatting with tier badges, trend indicators
                     "quality_gates_status": "Assessed — see CI/CD pipeline configuration for full gate details",
                 }
 
-            return {"error": f"Unknown tool: {tool_name}"}
+            return await super()._execute_tool(tool_name, tool_input)
 
         except Exception as e:
             logger.error("Engineering metrics tool failed", tool=tool_name, error=str(e))

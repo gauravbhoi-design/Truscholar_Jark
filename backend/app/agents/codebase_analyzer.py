@@ -51,7 +51,7 @@ Output format for analysis:
 - **Quality Score**: Overall assessment"""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "read_repository_file",
@@ -211,4 +211,4 @@ Output format for analysis:
                 run_id=tool_input["run_id"],
             )
 
-        return {"error": f"Unknown tool: {tool_name}"}
+        return await super()._execute_tool(tool_name, tool_input)

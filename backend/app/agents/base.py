@@ -26,6 +26,73 @@ def _summarize_tool_input(tool_input: dict) -> dict:
     return summary
 
 
+# ─── Shared CLI fallback tool ──────────────────────────────────────────────
+#
+# Every agent gets this `run_shell` tool in addition to its specialized
+# MCP tools. Claude picks naturally — same pattern as Claude Code's Bash
+# tool sitting alongside Read/Edit/Grep. The system prompt prefix below
+# tells the agent to prefer specialized tools when they fit.
+
+RUN_SHELL_TOOL: dict = {
+    "name": "run_shell",
+    "description": (
+        "Run a shell command (gh, gcloud, kubectl, git, jq, curl, etc.) when "
+        "no specialized tool covers the operation. Use this for ad-hoc CLI "
+        "tasks: complex `gcloud` queries, `gh pr` flows, multi-step git "
+        "operations, exploring filesystem, etc. Commands run in a sandboxed "
+        "subprocess with an allowlist, timeout, and output truncation. The "
+        "session has a persistent working directory — `cd subdir` followed "
+        "by `ls` runs `ls` inside `subdir`. Always prefer a specialized "
+        "MCP tool when one exists; only fall back to run_shell when nothing "
+        "specialized fits the request."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The shell command to execute. One command per call.",
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Max seconds to wait for the command. Default 30, max 120.",
+                "default": 30,
+            },
+            "cwd": {
+                "type": "string",
+                "description": "Optional working directory override for this single call. If omitted, uses the session's tracked workdir.",
+            },
+        },
+        "required": ["command"],
+    },
+}
+
+
+TOOL_SELECTION_PROMPT = """\
+## Tool selection
+
+You have two kinds of tools available:
+
+1. **Specialized tools** (named like `query_gcp_logs`, `list_repos`,
+   `check_ecs_service`, etc.) — structured operations with typed inputs
+   and JSON outputs. They are deterministic, fast, and pre-validated.
+   Use these whenever one fits the task at hand.
+
+2. **`run_shell`** — a general-purpose CLI fallback. Use it for ad-hoc
+   commands when no specialized tool covers the operation: `gh pr` flows,
+   complex `gcloud` queries, `kubectl` exploration, multi-step `git`
+   sequences, filesystem inspection, etc.
+
+Rules:
+- Prefer the specialized tool when one fits — it's faster and more reliable.
+- Fall back to `run_shell` only when nothing specialized matches the need.
+- Run one shell command per call, then read the output before deciding the
+  next step. Don't chain unrelated operations with `&&` — make multiple calls.
+- The session has a persistent working directory: `cd subdir` in one call
+  affects the next call's `ls`.
+"""
+
+
 def _create_client() -> anthropic.AsyncAnthropic:
     """Create the appropriate Anthropic client (Vertex AI or direct API)."""
     if settings.use_vertex_ai:
@@ -57,9 +124,18 @@ class BaseAgent(ABC):
     - Structured JSON output
     - Cost tracking via token usage
     - Hook support for safety gates
+    - A shared `run_shell` CLI fallback alongside its specialized MCP tools
 
     Uses Claude Opus 4.6 via GCP Vertex AI by default.
+
+    Subclasses should override `mcp_tools` (not `tools`) to declare their
+    specialized MCP tools. The base class composes those with the shared
+    `run_shell` tool unless `enable_cli = False`.
     """
+
+    # Set to False on a subclass to remove the CLI fallback (e.g. if the
+    # agent should be confined to structured tools only).
+    enable_cli: bool = True
 
     def __init__(self):
         self.client = _create_client()
@@ -74,12 +150,39 @@ class BaseAgent(ABC):
     @property
     @abstractmethod
     def system_prompt(self) -> str:
-        """System prompt defining agent behavior."""
+        """System prompt defining agent behavior. The base class
+        automatically prepends a tool-selection guidance block."""
+
+    @property
+    def mcp_tools(self) -> list[dict]:
+        """Specialized MCP tool schemas for this agent. Override in subclasses.
+
+        These are merged with the shared `run_shell` tool by `tools`.
+        Older subclasses that override `tools` directly still work — the
+        base class only injects `run_shell` if it isn't already present.
+        """
+        return []
 
     @property
     def tools(self) -> list[dict]:
-        """MCP tools available to this agent. Override in subclasses."""
-        return []
+        """Final tool list passed to the Claude API.
+
+        Composes `mcp_tools` + `run_shell` (when `enable_cli`). Subclasses
+        that override `tools` for legacy reasons keep working — the base
+        only injects `run_shell` if no entry with that name exists.
+        """
+        tools_list = list(self.mcp_tools)
+        if self.enable_cli and not any(t.get("name") == "run_shell" for t in tools_list):
+            tools_list.append(RUN_SHELL_TOOL)
+        return tools_list
+
+    @property
+    def effective_system_prompt(self) -> str:
+        """System prompt sent to Claude — agent's prompt + tool-selection guidance."""
+        base = self.system_prompt
+        if self.enable_cli:
+            return f"{base}\n\n{TOOL_SELECTION_PROMPT}"
+        return base
 
     async def execute(self, query: str, context: dict | None = None, user: dict | None = None) -> dict:
         """Execute the agent with a query and return structured result."""
@@ -92,7 +195,7 @@ class BaseAgent(ABC):
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=self.system_prompt,
+                system=self.effective_system_prompt,
                 messages=messages,
                 tools=self.tools if self.tools else anthropic.NOT_GIVEN,
             )
@@ -132,7 +235,7 @@ class BaseAgent(ABC):
                 response = await self.client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
-                    system=self.system_prompt,
+                    system=self.effective_system_prompt,
                     messages=messages,
                     tools=self.tools if self.tools else anthropic.NOT_GIVEN,
                 )
@@ -178,7 +281,7 @@ class BaseAgent(ABC):
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=self.system_prompt,
+                system=self.effective_system_prompt,
                 messages=messages,
                 tools=self.tools if self.tools else anthropic.NOT_GIVEN,
             )
@@ -247,7 +350,7 @@ class BaseAgent(ABC):
                 response = await self.client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
-                    system=self.system_prompt,
+                    system=self.effective_system_prompt,
                     messages=messages,
                     tools=self.tools if self.tools else anthropic.NOT_GIVEN,
                 )
@@ -427,9 +530,41 @@ Each step should map to exactly one tool call."""
         return results
 
     async def _execute_tool(self, tool_name: str, tool_input: dict) -> Any:
-        """Execute a single tool. Override in subclasses for MCP tool dispatch."""
+        """Execute a single tool. Subclasses override and chain to super()
+        for unknown tools so the shared `run_shell` dispatch keeps working.
+        """
+        if tool_name == "run_shell":
+            return await self._run_shell(tool_input)
+
         logger.warning("Unhandled tool call", tool=tool_name, agent=self.name)
         return {"error": f"Tool '{tool_name}' not implemented"}
+
+    async def _run_shell(self, tool_input: dict) -> dict:
+        """Execute a shell command via the shared TerminalMCPClient.
+
+        Pulls the requesting user's GitHub + GCP credentials out of the
+        per-call user dict so commands authenticate as them, not as the
+        backend service account. Session-scoped workdir is keyed off
+        `agent_name + user_sub` so two parallel sessions don't collide.
+        """
+        from app.mcp.terminal import TerminalMCPClient
+
+        user = getattr(self, "_current_user", None) or {}
+
+        session_id = f"{self.name}:{user.get('sub') or user.get('login') or 'anon'}"
+
+        terminal = TerminalMCPClient(
+            gcp_access_token=user.get("gcp_access_token"),
+            github_token=user.get("github_token"),
+            gcp_project_id=user.get("gcp_project_id") or settings.gcp_project_id,
+            session_id=session_id,
+        )
+
+        return await terminal.execute(
+            command=tool_input["command"],
+            cwd=tool_input.get("cwd"),
+            timeout=min(int(tool_input.get("timeout", 30)), 120),
+        )
 
     def _calculate_cost(self, usage) -> float:
         """Calculate API cost from token usage.

@@ -37,7 +37,7 @@ Output format:
 - **Recommendations**: Specific optimizations with expected impact"""
 
     @property
-    def tools(self) -> list[dict]:
+    def mcp_tools(self) -> list[dict]:
         return [
             {
                 "name": "query_prometheus",
@@ -149,4 +149,4 @@ Output format:
                 timeout=min(tool_input.get("timeout", 30), 120),
             )
 
-        return {"error": f"Unknown tool: {tool_name}"}
+        return await super()._execute_tool(tool_name, tool_input)
