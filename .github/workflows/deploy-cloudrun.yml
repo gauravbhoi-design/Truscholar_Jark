@@ -261,8 +261,8 @@ jobs:
           GITHUB_APP_CLIENT_ID=${{ secrets.GH_APP_CLIENT_ID }},\
           GITHUB_APP_CLIENT_SECRET=${{ secrets.GH_APP_CLIENT_SECRET }},\
           GITHUB_APP_WEBHOOK_SECRET=${{ secrets.GH_APP_WEBHOOK_SECRET }},\
-          GITHUB_APP_PRIVATE_KEY_PATH=/secrets/github-app-private-key" \
-            --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest,/secrets/github-app-private-key=github-app-private-key:latest" \
+          GITHUB_APP_PRIVATE_KEY_PATH=/github-app-secrets/private-key" \
+            --update-secrets "/secrets/vertex-sa-key=vertex-sa-key:latest,/github-app-secrets/private-key=github-app-private-key:latest" \
             --service-account ${{ env.SA_EMAIL }}
 
       - name: Get API URL
