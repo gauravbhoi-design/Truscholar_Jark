@@ -90,12 +90,13 @@ async def zoho_callback(
         logger.error("Zoho token exchange returned no access_token", response=tokens)
         raise HTTPException(status_code=400, detail=f"Zoho returned no access token: {tokens}")
 
-    # Get user info
+    # Get user info — Zoho APIs require the "Zoho-oauthtoken" scheme,
+    # NOT the standard "Bearer".
     zoho_email = ""
     async with httpx.AsyncClient() as client:
         user_resp = await client.get(
             ZOHO_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
         )
     if user_resp.status_code == 200:
         zoho_user = user_resp.json()
@@ -297,7 +298,7 @@ async def zoho_debug(
         "https://sprintsapi.zoho.jp/zsapi",
         "https://sprints.zoho.in/zsapi",  # legacy / what we had before
     ]
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Zoho-oauthtoken {token}", "Content-Type": "application/json"}
     probe_results = []
     working_base = None
     async with httpx.AsyncClient(timeout=10) as http:

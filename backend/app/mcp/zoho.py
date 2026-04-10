@@ -27,8 +27,12 @@ class ZohoSprintsMCPClient:
     def __init__(self, access_token: str, portal_name: str = ""):
         if not access_token:
             raise ValueError("Zoho access token required. Connect Zoho in Settings.")
+        # Zoho APIs require their custom "Zoho-oauthtoken" scheme, NOT
+        # the standard "Bearer". Using Bearer returns 7404 'Given URL is
+        # wrong' even though the token is valid — Zoho's gateway treats
+        # unauthenticated requests as malformed URLs.
         self.headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Zoho-oauthtoken {access_token}",
             "Content-Type": "application/json",
         }
         self.portal_name = portal_name
