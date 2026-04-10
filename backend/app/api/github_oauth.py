@@ -619,5 +619,20 @@ async def gcp_signin_callback(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("GCP OAuth sign-in failed", error=str(e))
-        raise HTTPException(status_code=500, detail="GCP authentication failed")
+        # Log the real exception with traceback so Cloud Run logs always
+        # carry the root cause. The response payload only exposes the raw
+        # error string when running in dev / when api docs are enabled —
+        # in locked-down prod we still return a generic message so we
+        # don't leak internals to anonymous callers.
+        import traceback
+        logger.error(
+            "GCP OAuth sign-in failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            traceback=traceback.format_exc(),
+        )
+        if settings.debug or settings.enable_api_docs:
+            detail = f"GCP authentication failed: {type(e).__name__}: {str(e)[:500]}"
+        else:
+            detail = "GCP authentication failed"
+        raise HTTPException(status_code=500, detail=detail)

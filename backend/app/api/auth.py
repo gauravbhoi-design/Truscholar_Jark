@@ -195,8 +195,18 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
     # (matches the rest of the schema), so we store a naive UTC datetime.
     now_naive = datetime.now(UTC).replace(tzinfo=None)
 
+    # Primary lookup: by auth0_sub (set on every fresh login).
     result = await db.execute(select(User).where(User.auth0_sub == sub))
     user = result.scalar_one_or_none()
+
+    # Fallback: a row with this email may already exist from an older code
+    # path that didn't set auth0_sub. Adopt it instead of trying to INSERT
+    # and tripping the unique-email constraint.
+    if not user:
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if user:
+            user.auth0_sub = sub
 
     if user:
         user.email = email
