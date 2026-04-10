@@ -269,6 +269,71 @@ async def get_zoho_portals(
     return await client.get_portals()
 
 
+@router.get("/debug/exact")
+async def zoho_debug_exact(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hit the exact URL captured from the Zoho Sprints web UI with our
+    OAuth token. If this returns 200, OAuth works on /zsapi/ endpoints
+    and we just need to find the right list endpoint. If it returns
+    7404 or 401, /zsapi/ is cookie-only and we need a different API.
+    """
+    import httpx
+
+    user_id = user.get("sub", user.get("login", ""))
+    token = await get_zoho_access_token(user_id, db)
+    if not token:
+        return {"error": "Zoho not connected"}
+
+    headers_variants = {
+        "Zoho-oauthtoken": {"Authorization": f"Zoho-oauthtoken {token}"},
+        "Bearer": {"Authorization": f"Bearer {token}"},
+        "Zoho-authtoken": {"Authorization": f"Zoho-authtoken {token}"},  # legacy
+    }
+
+    # Three candidate URLs of increasing specificity.
+    # 1. The exact URL from the user's DevTools capture.
+    # 2. A simpler team-level URL.
+    # 3. A top-level portals URL that Zoho's legacy API docs mention.
+    urls = [
+        "https://sprints.zoho.in/zsapi/team/60009511678/projects/16176000000006001/priority/?action=data&index=1&range=250",
+        "https://sprints.zoho.in/zsapi/team/60009511678/settings/?action=banners",
+        "https://sprints.zoho.in/zsapi/team/?action=data",
+        "https://sprints.zoho.in/zsapi/portals/?action=data",
+        "https://sprints.zoho.in/zsapi/myteam/?action=data",
+        "https://sprints.zoho.in/zsapi/teams/?action=data",
+    ]
+
+    results = []
+    async with httpx.AsyncClient(timeout=10) as http:
+        for url in urls:
+            for scheme, hdrs in headers_variants.items():
+                try:
+                    resp = await http.get(url, headers=hdrs)
+                    results.append({
+                        "url": url.replace("https://sprints.zoho.in/zsapi", "…"),
+                        "auth": scheme,
+                        "status": resp.status_code,
+                        "body": resp.text[:200],
+                    })
+                except Exception as e:
+                    results.append({
+                        "url": url.replace("https://sprints.zoho.in/zsapi", "…"),
+                        "auth": scheme,
+                        "error": str(e)[:150],
+                    })
+
+    # Classify: anything that's NOT 7404 is interesting
+    interesting = [r for r in results if "7404" not in r.get("body", "")]
+
+    return {
+        "token_preview": f"{token[:10]}…{token[-4:]}" if token else None,
+        "total_attempts": len(results),
+        "interesting": interesting,
+    }
+
+
 @router.get("/debug")
 async def zoho_debug(
     user: dict = Depends(get_current_user),
