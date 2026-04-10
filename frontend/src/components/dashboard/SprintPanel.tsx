@@ -83,6 +83,12 @@ export function SprintPanel() {
       const res = await fetch(`${API_URL}/auth/zoho/sprints/active`, { headers: getAuthHeader() });
       if (res.ok) {
         const data = await res.json();
+        // The endpoint returns 200 even on logical errors (e.g. no portals,
+        // no teams, no sprints). Surface the error string so the user
+        // sees what's wrong instead of a blank board.
+        if (data.error) {
+          setError(data.error);
+        }
         setSprint(data.sprint || null);
         setItems(data.items || []);
         setSummary(data.summary || {});
@@ -113,6 +119,32 @@ export function SprintPanel() {
         <p className="text-sm text-center max-w-md">
           Connect your Zoho Sprints account in Settings to see sprint boards, tasks, and progress here.
         </p>
+      </div>
+    );
+  }
+
+  // Connected but the API returned no sprint at all — surface the actual
+  // reason instead of pretending the board is empty.
+  if (!sprint && error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-4 p-6">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-60" />
+        <h2 className="text-lg font-semibold">No Sprints Loaded</h2>
+        <p className="text-sm text-center max-w-md text-destructive">{error}</p>
+        <p className="text-xs text-center max-w-md">
+          Make sure your Zoho user has access to a portal with at least one team and one sprint.
+          You can verify in Zoho Sprints directly, then click Refresh.
+        </p>
+        <button
+          onClick={() => {
+            setError("");
+            setLoading(true);
+            loadSprint();
+          }}
+          className="text-xs px-3 py-1.5 border rounded-md hover:bg-accent"
+        >
+          Retry
+        </button>
       </div>
     );
   }

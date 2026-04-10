@@ -266,3 +266,45 @@ async def get_zoho_portals(
     from app.mcp.zoho import ZohoSprintsMCPClient
     client = ZohoSprintsMCPClient(access_token=token)
     return await client.get_portals()
+
+
+@router.get("/debug")
+async def zoho_debug(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnostic endpoint that walks the full chain (portals → teams →
+    sprints) and reports each step's raw result so we can see exactly
+    where Zoho integration is failing.
+    """
+    user_id = user.get("sub", user.get("login", ""))
+    token = await get_zoho_access_token(user_id, db)
+    if not token:
+        return {"step": "token", "ok": False, "error": "Zoho not connected"}
+
+    from app.mcp.zoho import ZohoSprintsMCPClient
+    client = ZohoSprintsMCPClient(access_token=token)
+
+    portals = await client.get_portals()
+    if "error" in portals or not portals.get("portals"):
+        return {"step": "portals", "ok": False, "result": portals}
+
+    portal_id = portals["portals"][0]["id"]
+    teams = await client.get_teams(portal_id)
+    if "error" in teams or not teams.get("teams"):
+        return {"step": "teams", "ok": False, "portal_id": portal_id, "result": teams}
+
+    team_id = teams["teams"][0]["id"]
+    sprints = await client.get_sprints(portal_id, team_id)
+    return {
+        "step": "sprints",
+        "ok": True,
+        "portal_id": portal_id,
+        "team_id": team_id,
+        "portals_count": len(portals.get("portals", [])),
+        "teams_count": len(teams.get("teams", [])),
+        "sprints_count": len(sprints.get("sprints", [])),
+        "sprint_statuses": [s.get("status") for s in sprints.get("sprints", [])][:20],
+        "first_sprint": sprints.get("sprints", [{}])[0] if sprints.get("sprints") else None,
+        "raw": sprints,
+    }

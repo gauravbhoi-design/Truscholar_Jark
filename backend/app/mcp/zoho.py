@@ -31,13 +31,23 @@ class ZohoSprintsMCPClient:
         url = f"{ZOHO_SPRINTS_API}{path}"
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.request(method, url, headers=self.headers, **kwargs)
+            logger.info(
+                "Zoho API call",
+                method=method,
+                path=path,
+                status=resp.status_code,
+                body_preview=resp.text[:300],
+            )
             if resp.status_code == 401:
                 return {"error": "Zoho token expired. Please reconnect in Settings."}
             if resp.status_code == 403:
                 return {"error": "Permission denied. Check Zoho Sprints permissions."}
             if resp.status_code != 200:
                 return {"error": f"Zoho API error {resp.status_code}: {resp.text[:200]}"}
-            return resp.json()
+            try:
+                return resp.json()
+            except Exception as e:
+                return {"error": f"Zoho returned non-JSON: {str(e)[:100]}", "raw": resp.text[:300]}
 
     # ─── Portal & Teams ────────────────────────────────────────────────
 
@@ -100,19 +110,50 @@ class ZohoSprintsMCPClient:
         }
 
     async def get_active_sprint(self, portal_id: str, team_id: str) -> dict:
-        """Get the currently active sprint with items."""
+        """Get the currently active sprint with items.
+
+        Zoho's status field varies by region/account ('Active', 'active',
+        'In Progress', 'Started', etc.) so the match is case-insensitive
+        and tries several common variants. If nothing matches, fall back
+        to the most recently started sprint so the dashboard still
+        renders something useful.
+        """
         sprints_data = await self.get_sprints(portal_id, team_id)
         if "error" in sprints_data:
             return sprints_data
 
+        sprints = sprints_data.get("sprints", [])
+        logger.info(
+            "Zoho sprints retrieved",
+            count=len(sprints),
+            statuses=[s.get("status") for s in sprints[:10]],
+        )
+
+        active_keywords = {"active", "in progress", "inprogress", "started", "running", "open"}
         active = None
-        for s in sprints_data.get("sprints", []):
-            if s.get("status") == "active":
+        for s in sprints:
+            status = (s.get("status") or "").strip().lower()
+            if status in active_keywords:
                 active = s
                 break
 
+        # Fallback: most recent by start_date so the user always sees data
+        if not active and sprints:
+            try:
+                active = sorted(
+                    sprints,
+                    key=lambda x: x.get("start_date") or "",
+                    reverse=True,
+                )[0]
+                logger.info("No active sprint, falling back to most recent", sprint=active.get("name"))
+            except Exception:
+                active = sprints[0]
+
         if not active:
-            return {"error": "No active sprint found", "sprints": sprints_data.get("sprints", [])}
+            return {
+                "error": "No sprints found in this team. Create one in Zoho Sprints first.",
+                "sprints": sprints,
+            }
 
         # Get sprint items
         items_data = await self.get_sprint_items(portal_id, team_id, active["id"])
@@ -121,6 +162,7 @@ class ZohoSprintsMCPClient:
             "sprint": active,
             "items": items_data.get("items", []),
             "summary": items_data.get("summary", {}),
+            "all_sprints": sprints,
         }
 
     # ─── Sprint Items (User Stories, Tasks, Bugs) ──────────────────────
