@@ -214,6 +214,7 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
         user.login = user_data.get("login")
         user.avatar_url = user_data.get("avatar_url")
         user.last_login_at = now_naive
+        user.login_count = (user.login_count or 0) + 1
         user.is_active = True
     else:
         # First user becomes admin so the admin panel is bootstrappable.
@@ -228,6 +229,7 @@ async def upsert_user_on_login(user_data: dict, db) -> "User":  # type: ignore[n
             avatar_url=user_data.get("avatar_url"),
             role=role,
             last_login_at=now_naive,
+            login_count=1,
             is_active=True,
         )
         db.add(user)

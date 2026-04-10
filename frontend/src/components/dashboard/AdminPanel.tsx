@@ -10,6 +10,13 @@ import {
   Search,
   Shield,
   RefreshCw,
+  Activity,
+  X,
+  Terminal,
+  Cloud,
+  Github,
+  Wrench,
+  TrendingUp,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -18,6 +25,8 @@ function getAuthHeader(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("copilot_token") : null;
   return { Authorization: `Bearer ${token || ""}`, "Content-Type": "application/json" };
 }
+
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 interface AdminUser {
   id: string;
@@ -30,6 +39,8 @@ interface AdminUser {
   created_at: string | null;
   last_login_at: string | null;
   last_active_at: string | null;
+  login_count: number;
+  primary_agent: string | null;
   conversation_count: number;
   message_count: number;
   plan_count: number;
@@ -43,7 +54,41 @@ interface AdminUsersResponse {
   users: AdminUser[];
 }
 
+interface PlatformActivity {
+  dau: number;
+  wau: number;
+  mau: number;
+  total_users: number;
+  new_users_30d: number;
+  top_agents: { agent: string; calls: number; cost_usd: number }[];
+  top_tools: { tool: string; calls: number; kind: "cli" | "mcp" }[];
+  cost_trend_7d: { date: string; cost_usd: number; message_count: number }[];
+}
+
+interface UserDetail {
+  user: AdminUser & { auth0_sub: string | null };
+  totals: {
+    conversation_count: number;
+    plan_count: number;
+    conversation_cost_usd: number;
+    plan_cost_usd: number;
+    total_cost_usd: number;
+    tool_calls_total: number;
+    tool_calls_cli: number;
+    tool_calls_mcp: number;
+  };
+  per_agent: { agent: string; message_count: number; cost_usd: number }[];
+  per_tool: { tool: string; agent: string; call_count: number; avg_duration_ms: number; kind: "cli" | "mcp" }[];
+  services: { provider: string; email: string | null; project_id: string | null; is_active: boolean; connected_at: string | null; last_used_at: string | null }[];
+  github_app_installations: { installation_id: number; account_login: string; account_type: string; is_active: boolean; installed_at: string | null }[];
+  recent_conversations: { id: string; title: string; message_count: number; cost_usd: number; created_at: string | null; updated_at: string | null }[];
+  recent_audit_log: { id: string; agent: string; tool: string; duration_ms: number; approved: boolean; created_at: string | null; tool_input_preview: string | null }[];
+  cost_trend_30d: { date: string; cost_usd: number; message_count: number }[];
+}
+
 const ROLES = ["admin", "engineer", "viewer"] as const;
+
+// ─── Formatters ────────────────────────────────────────────────────────────
 
 function formatUsd(n: number): string {
   if (n >= 1) return `$${n.toFixed(2)}`;
@@ -67,6 +112,8 @@ function formatDate(iso: string | null): string {
   if (days < 30) return `${days}d ago`;
   return d.toLocaleDateString();
 }
+
+// ─── Reusable bits ─────────────────────────────────────────────────────────
 
 function StatCard({
   title,
@@ -93,28 +140,429 @@ function StatCard({
   );
 }
 
+function Sparkline({ points }: { points: number[] }) {
+  if (points.length === 0) return <div className="h-8 text-xs text-muted-foreground">no data</div>;
+  const max = Math.max(...points, 0.0001);
+  const w = 120;
+  const h = 32;
+  const step = points.length > 1 ? w / (points.length - 1) : 0;
+  const path = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${i * step},${h - (p / max) * h}`)
+    .join(" ");
+  return (
+    <svg width={w} height={h} className="text-primary">
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+// ─── Activity header ───────────────────────────────────────────────────────
+
+function PlatformActivityCard({ activity }: { activity: PlatformActivity | null }) {
+  if (!activity) return null;
+  const sparklinePoints = activity.cost_trend_7d.map((d) => d.cost_usd);
+  const trend7Total = activity.cost_trend_7d.reduce((s, d) => s + d.cost_usd, 0);
+
+  return (
+    <div className="border rounded-lg bg-card p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          Platform Activity
+        </h3>
+        <span className="text-xs text-muted-foreground">
+          {activity.new_users_30d} new users in last 30 days
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div>
+          <div className="text-xs text-muted-foreground">DAU</div>
+          <div className="text-xl font-bold">{activity.dau}</div>
+          <div className="text-xs text-muted-foreground">last 24h</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">WAU</div>
+          <div className="text-xl font-bold">{activity.wau}</div>
+          <div className="text-xs text-muted-foreground">last 7d</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">MAU</div>
+          <div className="text-xl font-bold">{activity.mau}</div>
+          <div className="text-xs text-muted-foreground">last 30d</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Cost (7d)</div>
+          <div className="text-xl font-bold">{formatUsd(trend7Total)}</div>
+          <Sparkline points={sparklinePoints} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t">
+        <div>
+          <div className="text-xs uppercase text-muted-foreground font-medium mb-2">Top Agents</div>
+          {activity.top_agents.length === 0 && (
+            <div className="text-xs text-muted-foreground">No agent activity yet</div>
+          )}
+          {activity.top_agents.map((a) => (
+            <div key={a.agent} className="flex items-center justify-between text-xs py-1">
+              <span className="font-medium">{a.agent}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {a.calls.toLocaleString()} calls · {formatUsd(a.cost_usd)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <div className="text-xs uppercase text-muted-foreground font-medium mb-2">Top Tools</div>
+          {activity.top_tools.length === 0 && (
+            <div className="text-xs text-muted-foreground">No tool calls yet</div>
+          )}
+          {activity.top_tools.map((t) => (
+            <div key={t.tool} className="flex items-center justify-between text-xs py-1">
+              <span className="font-medium flex items-center gap-1.5">
+                {t.kind === "cli" ? (
+                  <Terminal className="h-3 w-3 text-orange-500" />
+                ) : (
+                  <Wrench className="h-3 w-3 text-blue-500" />
+                )}
+                {t.tool}
+              </span>
+              <span className="text-muted-foreground tabular-nums">
+                {t.calls.toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── User drill-down modal ─────────────────────────────────────────────────
+
+function UserDetailModal({
+  userId,
+  onClose,
+}: {
+  userId: string;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<UserDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/admin/users/${userId}`, { headers: getAuthHeader() });
+        if (!res.ok) {
+          setError(`Failed to load user (HTTP ${res.status})`);
+          return;
+        }
+        const json = (await res.json()) as UserDetail;
+        if (!cancelled) setDetail(json);
+      } catch {
+        if (!cancelled) setError("Backend not available");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border rounded-lg w-full max-w-4xl max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-card border-b px-6 py-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">User Details</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-accent">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {loading && (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {error && (
+            <div className="text-sm text-destructive flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+          {detail && <UserDetailContent detail={detail} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserDetailContent({ detail }: { detail: UserDetail }) {
+  const u = detail.user;
+  const t = detail.totals;
+  const trendPoints = detail.cost_trend_30d.map((d) => d.cost_usd);
+
+  return (
+    <>
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        {u.avatar_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={u.avatar_url}
+            alt={u.login || u.name}
+            className="h-16 w-16 rounded-full"
+          />
+        ) : (
+          <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center text-2xl font-bold">
+            {(u.name || u.email || "?").slice(0, 1).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="text-xl font-bold">{u.name || u.login || "—"}</div>
+          <div className="text-sm text-muted-foreground">{u.email}</div>
+          {u.login && <div className="text-xs text-muted-foreground">@{u.login}</div>}
+          <div className="text-xs text-muted-foreground mt-1">
+            {u.role} · joined {formatDate(u.created_at)} · {u.login_count} logins
+          </div>
+        </div>
+      </div>
+
+      {/* Stat row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="border rounded p-3">
+          <div className="text-xs text-muted-foreground">Total spent</div>
+          <div className="text-lg font-bold">{formatUsd(t.total_cost_usd)}</div>
+        </div>
+        <div className="border rounded p-3">
+          <div className="text-xs text-muted-foreground">Tool calls</div>
+          <div className="text-lg font-bold">{t.tool_calls_total.toLocaleString()}</div>
+          <div className="text-xs text-muted-foreground">
+            {t.tool_calls_mcp} MCP · {t.tool_calls_cli} CLI
+          </div>
+        </div>
+        <div className="border rounded p-3">
+          <div className="text-xs text-muted-foreground">Plans</div>
+          <div className="text-lg font-bold">{t.plan_count}</div>
+        </div>
+        <div className="border rounded p-3">
+          <div className="text-xs text-muted-foreground">Last active</div>
+          <div className="text-lg font-bold">{formatDate(u.last_active_at)}</div>
+        </div>
+      </div>
+
+      {/* 30-day cost trend */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2 flex items-center gap-2">
+          <TrendingUp className="h-3 w-3" />
+          Cost (last 30 days)
+        </div>
+        {trendPoints.length === 0 ? (
+          <div className="text-xs text-muted-foreground">No activity in last 30 days</div>
+        ) : (
+          <Sparkline points={trendPoints} />
+        )}
+      </div>
+
+      {/* Per-agent breakdown */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Agent Usage
+        </div>
+        {detail.per_agent.length === 0 ? (
+          <div className="text-xs text-muted-foreground">No agent activity yet</div>
+        ) : (
+          <div className="space-y-1">
+            {detail.per_agent.map((a) => (
+              <div key={a.agent} className="flex items-center justify-between text-sm py-1 border-b last:border-0">
+                <span className="font-medium">{a.agent}</span>
+                <span className="text-muted-foreground tabular-nums text-xs">
+                  {a.message_count} messages · {formatUsd(a.cost_usd)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Per-tool breakdown */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Tool Usage
+        </div>
+        {detail.per_tool.length === 0 ? (
+          <div className="text-xs text-muted-foreground">No tool calls yet</div>
+        ) : (
+          <div className="space-y-1 max-h-48 overflow-auto">
+            {detail.per_tool.map((tt, i) => (
+              <div key={`${tt.tool}-${i}`} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
+                <span className="font-medium flex items-center gap-2">
+                  {tt.kind === "cli" ? (
+                    <Terminal className="h-3 w-3 text-orange-500" />
+                  ) : (
+                    <Wrench className="h-3 w-3 text-blue-500" />
+                  )}
+                  {tt.tool}
+                  <span className="text-muted-foreground">via {tt.agent}</span>
+                </span>
+                <span className="text-muted-foreground tabular-nums">
+                  {tt.call_count}× · {tt.avg_duration_ms}ms avg
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Connected services */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Connected Services
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {detail.services.length === 0 && detail.github_app_installations.length === 0 && (
+            <div className="text-xs text-muted-foreground col-span-2">No services connected</div>
+          )}
+          {detail.services.map((s, i) => (
+            <div key={`${s.provider}-${i}`} className="border rounded p-2 text-xs">
+              <div className="font-medium flex items-center gap-1.5">
+                {s.provider === "gcp" ? (
+                  <Cloud className="h-3 w-3 text-blue-500" />
+                ) : s.provider === "github" ? (
+                  <Github className="h-3 w-3" />
+                ) : (
+                  <Wrench className="h-3 w-3" />
+                )}
+                {s.provider.toUpperCase()}
+                {s.is_active ? (
+                  <span className="text-green-500">●</span>
+                ) : (
+                  <span className="text-muted-foreground">○</span>
+                )}
+              </div>
+              {s.email && <div className="text-muted-foreground truncate">{s.email}</div>}
+              {s.project_id && <div className="text-muted-foreground truncate">{s.project_id}</div>}
+              <div className="text-muted-foreground">connected {formatDate(s.connected_at)}</div>
+            </div>
+          ))}
+          {detail.github_app_installations.map((i) => (
+            <div key={i.installation_id} className="border rounded p-2 text-xs">
+              <div className="font-medium flex items-center gap-1.5">
+                <Github className="h-3 w-3" />
+                GitHub App
+                {i.is_active ? (
+                  <span className="text-green-500">●</span>
+                ) : (
+                  <span className="text-muted-foreground">○</span>
+                )}
+              </div>
+              <div className="text-muted-foreground truncate">
+                {i.account_type}: {i.account_login}
+              </div>
+              <div className="text-muted-foreground">installed {formatDate(i.installed_at)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent conversations */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Recent Conversations
+        </div>
+        {detail.recent_conversations.length === 0 ? (
+          <div className="text-xs text-muted-foreground">No conversations yet</div>
+        ) : (
+          <div className="space-y-1 max-h-48 overflow-auto">
+            {detail.recent_conversations.map((c) => (
+              <div key={c.id} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
+                <span className="truncate flex-1 min-w-0">{c.title || "Untitled"}</span>
+                <span className="text-muted-foreground tabular-nums ml-2 shrink-0">
+                  {c.message_count}m · {formatUsd(c.cost_usd)} · {formatDate(c.updated_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent audit log */}
+      <div>
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Recent Tool Calls
+        </div>
+        {detail.recent_audit_log.length === 0 ? (
+          <div className="text-xs text-muted-foreground">No tool calls yet</div>
+        ) : (
+          <div className="space-y-1 max-h-64 overflow-auto">
+            {detail.recent_audit_log.map((a) => (
+              <div key={a.id} className="text-xs py-1.5 border-b last:border-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">
+                    {a.agent} → {a.tool}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {a.duration_ms}ms · {formatDate(a.created_at)}
+                  </span>
+                </div>
+                {a.tool_input_preview && (
+                  <div className="text-muted-foreground truncate font-mono text-[10px] mt-0.5">
+                    {a.tool_input_preview}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── Main panel ────────────────────────────────────────────────────────────
+
 export function AdminPanel() {
   const [data, setData] = useState<AdminUsersResponse | null>(null);
+  const [activity, setActivity] = useState<PlatformActivity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_URL}/admin/users`, { headers: getAuthHeader() });
-      if (res.status === 403) {
+      const [usersRes, activityRes] = await Promise.all([
+        fetch(`${API_URL}/admin/users`, { headers: getAuthHeader() }),
+        fetch(`${API_URL}/admin/activity`, { headers: getAuthHeader() }),
+      ]);
+      if (usersRes.status === 403) {
         setError("You don't have admin permissions to view this page.");
         return;
       }
-      if (!res.ok) {
-        setError(`Failed to load users (HTTP ${res.status})`);
+      if (!usersRes.ok) {
+        setError(`Failed to load users (HTTP ${usersRes.status})`);
         return;
       }
-      const json = (await res.json()) as AdminUsersResponse;
-      setData(json);
+      setData((await usersRes.json()) as AdminUsersResponse);
+      if (activityRes.ok) {
+        setActivity((await activityRes.json()) as PlatformActivity);
+      }
     } catch {
       setError("Backend not available");
     } finally {
@@ -211,12 +659,15 @@ export function AdminPanel() {
           </button>
         </div>
 
+        {/* Platform activity */}
+        <PlatformActivityCard activity={activity} />
+
         {/* Summary cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Users"
             value={String(data?.total_users ?? 0)}
-            subtitle={`${activeCount} active`}
+            subtitle={`${activeCount} have activity`}
             icon={Users}
           />
           <StatCard
@@ -255,7 +706,7 @@ export function AdminPanel() {
           />
         </div>
 
-        {/* Users table */}
+        {/* Users table — click any row to drill in */}
         <div className="border rounded-lg bg-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -263,10 +714,10 @@ export function AdminPanel() {
                 <tr>
                   <th className="text-left px-4 py-3 font-medium">User</th>
                   <th className="text-left px-4 py-3 font-medium">Role</th>
-                  <th className="text-right px-4 py-3 font-medium">Conversations</th>
+                  <th className="text-left px-4 py-3 font-medium">Primary Agent</th>
+                  <th className="text-right px-4 py-3 font-medium">Logins</th>
+                  <th className="text-right px-4 py-3 font-medium">Convos</th>
                   <th className="text-right px-4 py-3 font-medium">Messages</th>
-                  <th className="text-right px-4 py-3 font-medium">Plans</th>
-                  <th className="text-right px-4 py-3 font-medium">Installs</th>
                   <th className="text-right px-4 py-3 font-medium">Total Cost</th>
                   <th className="text-left px-4 py-3 font-medium">Last Active</th>
                 </tr>
@@ -280,7 +731,11 @@ export function AdminPanel() {
                   </tr>
                 )}
                 {filtered.map((u) => (
-                  <tr key={u.id} className="border-t hover:bg-accent/30">
+                  <tr
+                    key={u.id}
+                    className="border-t hover:bg-accent/30 cursor-pointer"
+                    onClick={() => setSelectedUserId(u.id)}
+                  >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         {u.avatar_url ? (
@@ -303,7 +758,7 @@ export function AdminPanel() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={u.role}
                         disabled={updatingId === u.id}
@@ -317,10 +772,12 @@ export function AdminPanel() {
                         ))}
                       </select>
                     </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {u.primary_agent || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{u.login_count}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{u.conversation_count}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{u.message_count}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{u.plan_count}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{u.installation_count}</td>
                     <td className="px-4 py-3 text-right tabular-nums font-medium">
                       {formatUsd(u.total_cost_usd)}
                     </td>
@@ -332,8 +789,15 @@ export function AdminPanel() {
               </tbody>
             </table>
           </div>
+          <div className="px-4 py-2 text-xs text-muted-foreground border-t">
+            Click any row for full activity drill-down
+          </div>
         </div>
       </div>
+
+      {selectedUserId && (
+        <UserDetailModal userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
+      )}
     </div>
   );
 }

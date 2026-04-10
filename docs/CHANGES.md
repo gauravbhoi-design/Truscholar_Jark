@@ -6,6 +6,122 @@ whenever a notable change ships.
 
 ---
 
+## 2026-04-10 — Complete user tracking in the admin panel
+
+### Highlights
+
+- Click any user row in the admin panel to drill into their full activity:
+  per-agent usage, per-tool usage (with MCP vs CLI split), connected
+  services, recent conversations, recent tool calls, and a 30-day cost
+  trend sparkline.
+- New **Platform Activity** card at the top of the panel with DAU / WAU /
+  MAU, top agents, top tools, and a 7-day cost sparkline so you can see
+  at a glance how the app is being used.
+- The user list now shows **login count** and **primary agent**, plus
+  every existing field. The first user persistence change tracked
+  `last_login_at` but didn't count logins — fixed.
+
+### Backend additions
+
+- [`backend/app/models/database.py`](../backend/app/models/database.py) —
+  `User.login_count` (int, default 0).
+- [`backend/app/main.py`](../backend/app/main.py) — startup migration adds
+  the column via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
+- [`backend/app/api/auth.py`](../backend/app/api/auth.py) —
+  `upsert_user_on_login` now `+= 1`s `login_count` on every fresh login
+  (and seeds it to `1` on creation).
+- [`backend/app/api/routes.py`](../backend/app/api/routes.py):
+  - `GET /admin/users` enriched with `login_count` and `primary_agent`
+    (computed from the agent that produced the most messages for each
+    user). Single SQL query, no N+1.
+  - **New** `GET /admin/users/{id}` — drill-down on one user. Returns:
+    - `user` — full row including `login_count`, `auth0_sub`, etc.
+    - `totals` — `total_cost_usd`, `tool_calls_total`, `tool_calls_cli`,
+      `tool_calls_mcp`, `plan_count`, `conversation_cost_usd`,
+      `plan_cost_usd`.
+    - `per_agent` — list of `{ agent, message_count, cost_usd }`
+      sorted by message count desc, computed from `messages` joined to
+      that user's conversations.
+    - `per_tool` — list of `{ tool, agent, call_count, avg_duration_ms,
+      kind: "cli" | "mcp" }` from the audit log, with `kind` derived
+      from whether the tool name is `run_shell` / `run_command`. Top 50.
+    - `services` — every `cloud_credentials` row for the user (GCP /
+      GitHub PAT / Zoho), with `is_active`, `connected_at`,
+      `last_used_at`.
+    - `github_app_installations` — installation rows linked to the user
+      via `auth0_sub`.
+    - `recent_conversations` — last 20 conversations with title,
+      message count, cost.
+    - `recent_audit_log` — last 30 tool calls with truncated input
+      preview.
+    - `cost_trend_30d` — daily buckets of `sum(message.cost_usd)` for
+      the last 30 days.
+  - **New** `GET /admin/activity` — platform-wide stats. Returns:
+    - `dau`, `wau`, `mau` — distinct active users in the last 24h / 7d /
+      30d, computed as `max(message_creators_in_window,
+      logged_in_in_window)` to avoid an expensive UNION DISTINCT.
+    - `total_users`, `new_users_30d`.
+    - `top_agents` — top 5 agents by message count, with cost.
+    - `top_tools` — top 10 tools from the audit log, with `kind` split.
+    - `cost_trend_7d` — daily cost buckets for the last 7 days.
+
+### Frontend additions
+
+- [`frontend/src/components/dashboard/AdminPanel.tsx`](../frontend/src/components/dashboard/AdminPanel.tsx)
+  rewritten with:
+  - **`PlatformActivityCard`** — header card above the users table showing
+    DAU/WAU/MAU, the 7-day cost total with a small SVG `Sparkline`, top
+    agents (call count + cost), and top tools (call count + MCP/CLI icon).
+  - **`UserDetailModal`** — full-screen modal opened by clicking any user
+    row. Loads `GET /admin/users/{id}` and renders every field via
+    `UserDetailContent`: header (avatar + login count + role + joined),
+    a 4-card stat row (total spent, tool calls split, plans, last active),
+    a 30-day sparkline, agent usage list, tool usage list, connected
+    services, recent conversations, and the recent tool-call log.
+  - The users table gained **Logins** and **Primary Agent** columns, and
+    the whole row is now `cursor-pointer` — clicking opens the drill-down.
+    The Role `<select>` stops propagation so changing a role doesn't
+    accidentally open the modal.
+  - `Sparkline` is a tiny inline SVG component (no chart library
+    dependency) that renders a normalized line over an array of numbers.
+
+### How an admin uses it
+
+1. Open the Admin tab in the sidebar.
+2. The **Platform Activity** card immediately shows DAU/WAU/MAU and the
+   top agents/tools — that's the "is anyone using this and what for?"
+   answer.
+3. The **users table** lists everyone sorted by total cost. Each row
+   shows logins, primary agent, conversation count, message count, and
+   total cost.
+4. **Click any row** → modal opens with the full per-user breakdown:
+   - Cost over time (sparkline) — are they ramping up or trailing off?
+   - Per-agent usage — is this user a Cloud Debugger heavy hitter or a
+     Codebase Analyzer power user?
+   - Per-tool usage — how often do they fall back to `run_shell` vs
+     specialized MCP tools? (Useful for tuning agent prompts.)
+   - Connected services — did they hook up GCP? Install the GitHub App?
+   - Recent conversations & tool calls — what did they actually do
+     last session?
+
+### Caveats
+
+- **DAU/WAU/MAU is approximate.** It's the max of (users with messages
+  in window) and (users who logged in in window), not a true distinct
+  union. The two sets overlap significantly so the numbers are within a
+  few percent of the real figure, but if you need exact distinct counts
+  push the query into a `UNION DISTINCT` (slower) or pre-aggregate into
+  a daily activity table.
+- **`primary_agent` is computed by message count**, not weighted by
+  cost. A user who runs many cheap codebase scans will show
+  Codebase Analyzer as their primary even if they spent more on a few
+  expensive Cloud Debugger sessions.
+- **The drill-down endpoint runs ~8 queries per request.** Fine for an
+  occasional admin click, would need caching if you put it on a public
+  URL or polled it from a dashboard.
+
+---
+
 ## 2026-04-10 — Auto MCP/CLI tool selection for all agents
 
 ### Highlights

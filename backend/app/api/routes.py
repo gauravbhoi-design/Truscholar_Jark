@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -520,6 +521,20 @@ async def list_all_users(
         .subquery()
     )
 
+    # Most-used agent per user — pick the agent with the highest message
+    # count, falling back to None if the user has no messages.
+    primary_agent_agg = (
+        select(
+            Conversation.user_id.label("user_id"),
+            Message.agent_name.label("agent_name"),
+            func.count(Message.id).label("agent_msg_count"),
+        )
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Message.agent_name.isnot(None))
+        .group_by(Conversation.user_id, Message.agent_name)
+        .subquery()
+    )
+
     query = (
         select(
             User.id,
@@ -531,6 +546,7 @@ async def list_all_users(
             User.is_active,
             User.created_at,
             User.last_login_at,
+            User.login_count,
             func.coalesce(conv_agg.c.conversation_count, 0).label("conversation_count"),
             func.coalesce(conv_agg.c.conversation_cost, 0.0).label("conversation_cost"),
             conv_agg.c.last_conversation_at,
@@ -547,6 +563,20 @@ async def list_all_users(
 
     result = await db.execute(query)
     rows = result.all()
+
+    # Compute primary agent per user (separate query — joining inline
+    # would force a complex window function).
+    primary_agents: dict[str, str] = {}
+    pa_result = await db.execute(
+        select(
+            primary_agent_agg.c.user_id,
+            primary_agent_agg.c.agent_name,
+            primary_agent_agg.c.agent_msg_count,
+        ).order_by(primary_agent_agg.c.user_id, primary_agent_agg.c.agent_msg_count.desc())
+    )
+    for pa_row in pa_result.all():
+        if str(pa_row.user_id) not in primary_agents:
+            primary_agents[str(pa_row.user_id)] = pa_row.agent_name
 
     users_out = []
     grand_cost = 0.0
@@ -569,6 +599,8 @@ async def list_all_users(
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "last_login_at": r.last_login_at.isoformat() if r.last_login_at else None,
             "last_active_at": last_active.isoformat() if last_active else None,
+            "login_count": int(r.login_count or 0),
+            "primary_agent": primary_agents.get(str(r.id)),
             "conversation_count": int(r.conversation_count or 0),
             "message_count": int(r.message_count or 0),
             "plan_count": int(r.plan_count or 0),
@@ -614,3 +646,370 @@ async def update_user_role(
     target.role = new_role
     await db.commit()
     return {"id": str(target.id), "role": target.role}
+
+
+@router.get("/admin/users/{user_id}")
+async def get_user_detail(
+    user_id: uuid.UUID,
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Drill-down on a single user — agent breakdown, tool breakdown,
+    connected services, recent activity, and a 30-day cost trend.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
+
+    from app.models.database import (
+        AgentAuditLog,
+        CloudCredential,
+        Conversation,
+        GitHubAppInstallation,
+        Message,
+        Plan,
+        User,
+    )
+
+    # ─── 1. The user row itself ───────────────────────────────────────
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    sub = target.auth0_sub  # for tables that key on the JWT sub string
+
+    # ─── 2. Per-agent usage ───────────────────────────────────────────
+    agent_q = await db.execute(
+        select(
+            Message.agent_name,
+            func.count(Message.id).label("msg_count"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("agent_cost"),
+        )
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.user_id == user_id)
+        .where(Message.agent_name.isnot(None))
+        .group_by(Message.agent_name)
+        .order_by(func.count(Message.id).desc())
+    )
+    per_agent = [
+        {
+            "agent": r.agent_name,
+            "message_count": int(r.msg_count),
+            "cost_usd": round(float(r.agent_cost or 0.0), 4),
+        }
+        for r in agent_q.all()
+    ]
+
+    # ─── 3. Per-tool usage (from audit log) ───────────────────────────
+    tool_q = await db.execute(
+        select(
+            AgentAuditLog.tool_name,
+            AgentAuditLog.agent_name,
+            func.count(AgentAuditLog.id).label("call_count"),
+            func.coalesce(func.avg(AgentAuditLog.duration_ms), 0).label("avg_ms"),
+        )
+        .join(Conversation, Conversation.id == AgentAuditLog.conversation_id)
+        .where(Conversation.user_id == user_id)
+        .group_by(AgentAuditLog.tool_name, AgentAuditLog.agent_name)
+        .order_by(func.count(AgentAuditLog.id).desc())
+        .limit(50)
+    )
+    per_tool = [
+        {
+            "tool": r.tool_name,
+            "agent": r.agent_name,
+            "call_count": int(r.call_count),
+            "avg_duration_ms": int(r.avg_ms or 0),
+            "kind": "cli" if r.tool_name in ("run_shell", "run_command") else "mcp",
+        }
+        for r in tool_q.all()
+    ]
+
+    # MCP vs CLI split
+    cli_calls = sum(t["call_count"] for t in per_tool if t["kind"] == "cli")
+    mcp_calls = sum(t["call_count"] for t in per_tool if t["kind"] == "mcp")
+
+    # ─── 4. Connected services ────────────────────────────────────────
+    services: list[dict] = []
+    if sub:
+        cred_q = await db.execute(
+            select(CloudCredential).where(CloudCredential.user_id == sub)
+        )
+        for c in cred_q.scalars().all():
+            services.append({
+                "provider": c.provider,
+                "email": c.email,
+                "project_id": c.project_id,
+                "is_active": c.is_active,
+                "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                "last_used_at": c.last_used_at.isoformat() if c.last_used_at else None,
+            })
+
+    installs: list[dict] = []
+    if sub:
+        inst_q = await db.execute(
+            select(GitHubAppInstallation).where(GitHubAppInstallation.user_id == sub)
+        )
+        for i in inst_q.scalars().all():
+            installs.append({
+                "installation_id": i.installation_id,
+                "account_login": i.account_login,
+                "account_type": i.account_type,
+                "is_active": i.is_active,
+                "installed_at": i.installed_at.isoformat() if i.installed_at else None,
+            })
+
+    # ─── 5. Recent conversations ──────────────────────────────────────
+    conv_q = await db.execute(
+        select(
+            Conversation.id,
+            Conversation.title,
+            Conversation.total_cost_usd,
+            Conversation.created_at,
+            Conversation.updated_at,
+            func.count(Message.id).label("msg_count"),
+        )
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .where(Conversation.user_id == user_id)
+        .group_by(Conversation.id)
+        .order_by(Conversation.updated_at.desc())
+        .limit(20)
+    )
+    recent_conversations = [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "message_count": int(c.msg_count or 0),
+            "cost_usd": round(float(c.total_cost_usd or 0.0), 4),
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        }
+        for c in conv_q.all()
+    ]
+
+    # ─── 6. Recent audit log entries (what they actually ran) ─────────
+    audit_q = await db.execute(
+        select(AgentAuditLog)
+        .join(Conversation, Conversation.id == AgentAuditLog.conversation_id)
+        .where(Conversation.user_id == user_id)
+        .order_by(AgentAuditLog.created_at.desc())
+        .limit(30)
+    )
+    recent_audit = [
+        {
+            "id": str(a.id),
+            "agent": a.agent_name,
+            "tool": a.tool_name,
+            "duration_ms": a.duration_ms,
+            "approved": a.approved,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            # Truncated input summary so the response stays bounded
+            "tool_input_preview": str(a.tool_input)[:200] if a.tool_input else None,
+        }
+        for a in audit_q.scalars().all()
+    ]
+
+    # ─── 7. 30-day cost trend (daily buckets) ─────────────────────────
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    cost_q = await db.execute(
+        select(
+            func.date(Message.created_at).label("day"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("day_cost"),
+            func.count(Message.id).label("day_msgs"),
+        )
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.user_id == user_id)
+        .where(Message.created_at >= thirty_days_ago)
+        .group_by(func.date(Message.created_at))
+        .order_by(func.date(Message.created_at))
+    )
+    cost_trend = [
+        {
+            "date": str(r.day),
+            "cost_usd": round(float(r.day_cost or 0.0), 4),
+            "message_count": int(r.day_msgs or 0),
+        }
+        for r in cost_q.all()
+    ]
+
+    # ─── 8. Plan count + cost (keyed on string sub) ───────────────────
+    plan_count = 0
+    plan_cost = 0.0
+    if sub:
+        plan_row = await db.execute(
+            select(
+                func.count(Plan.id),
+                func.coalesce(func.sum(Plan.total_cost_usd), 0.0),
+            ).where(Plan.user_id == sub)
+        )
+        pc, pt = plan_row.one()
+        plan_count = int(pc or 0)
+        plan_cost = float(pt or 0.0)
+
+    # Total cost = conversations + plans
+    conv_total_row = await db.execute(
+        select(func.coalesce(func.sum(Conversation.total_cost_usd), 0.0))
+        .where(Conversation.user_id == user_id)
+    )
+    conv_total = float(conv_total_row.scalar() or 0.0)
+
+    return {
+        "user": {
+            "id": str(target.id),
+            "email": target.email,
+            "name": target.name,
+            "login": target.login,
+            "avatar_url": target.avatar_url,
+            "role": target.role,
+            "is_active": target.is_active,
+            "created_at": target.created_at.isoformat() if target.created_at else None,
+            "last_login_at": target.last_login_at.isoformat() if target.last_login_at else None,
+            "login_count": int(target.login_count or 0),
+            "auth0_sub": target.auth0_sub,
+        },
+        "totals": {
+            "conversation_count": len(recent_conversations),  # 20-cap; raw count via /admin/users
+            "plan_count": plan_count,
+            "conversation_cost_usd": round(conv_total, 4),
+            "plan_cost_usd": round(plan_cost, 4),
+            "total_cost_usd": round(conv_total + plan_cost, 4),
+            "tool_calls_total": cli_calls + mcp_calls,
+            "tool_calls_cli": cli_calls,
+            "tool_calls_mcp": mcp_calls,
+        },
+        "per_agent": per_agent,
+        "per_tool": per_tool,
+        "services": services,
+        "github_app_installations": installs,
+        "recent_conversations": recent_conversations,
+        "recent_audit_log": recent_audit,
+        "cost_trend_30d": cost_trend,
+    }
+
+
+@router.get("/admin/activity")
+async def get_platform_activity(
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Platform-wide usage stats — DAU/WAU/MAU, top agents, top tools,
+    cost trend. Drives the activity header in the admin panel.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
+
+    from app.models.database import (
+        AgentAuditLog,
+        Conversation,
+        Message,
+        User,
+    )
+
+    now = datetime.now()
+    day_ago = now - timedelta(days=1)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    # ─── DAU / WAU / MAU ──────────────────────────────────────────────
+    # Active = had a message-producing event in the window. Falls back
+    # to last_login_at for users with no messages yet.
+    async def _active_users_since(since: datetime) -> int:
+        # Users with messages in the window
+        msg_users = await db.execute(
+            select(func.count(func.distinct(Conversation.user_id)))
+            .join(Message, Message.conversation_id == Conversation.id)
+            .where(Message.created_at >= since)
+        )
+        msg_count = msg_users.scalar() or 0
+
+        # Users who at least logged in in the window (covers no-message users)
+        login_users = await db.execute(
+            select(func.count(User.id)).where(User.last_login_at >= since)
+        )
+        login_count = login_users.scalar() or 0
+
+        # Conservative max — same user might be in both sets, but this
+        # bounds the count without an expensive UNION DISTINCT.
+        return max(msg_count, login_count)
+
+    dau = await _active_users_since(day_ago)
+    wau = await _active_users_since(week_ago)
+    mau = await _active_users_since(month_ago)
+
+    total_users = await db.scalar(select(func.count(User.id))) or 0
+    new_users_30d = await db.scalar(
+        select(func.count(User.id)).where(User.created_at >= month_ago)
+    ) or 0
+
+    # ─── Top agents by message count ──────────────────────────────────
+    top_agents_q = await db.execute(
+        select(
+            Message.agent_name,
+            func.count(Message.id).label("calls"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+        )
+        .where(Message.agent_name.isnot(None))
+        .group_by(Message.agent_name)
+        .order_by(func.count(Message.id).desc())
+        .limit(5)
+    )
+    top_agents = [
+        {
+            "agent": r.agent_name,
+            "calls": int(r.calls),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+        }
+        for r in top_agents_q.all()
+    ]
+
+    # ─── Top tools by call count ──────────────────────────────────────
+    top_tools_q = await db.execute(
+        select(
+            AgentAuditLog.tool_name,
+            func.count(AgentAuditLog.id).label("calls"),
+        )
+        .group_by(AgentAuditLog.tool_name)
+        .order_by(func.count(AgentAuditLog.id).desc())
+        .limit(10)
+    )
+    top_tools = [
+        {
+            "tool": r.tool_name,
+            "calls": int(r.calls),
+            "kind": "cli" if r.tool_name in ("run_shell", "run_command") else "mcp",
+        }
+        for r in top_tools_q.all()
+    ]
+
+    # ─── Cost trend (last 7 days, daily buckets) ──────────────────────
+    cost_q = await db.execute(
+        select(
+            func.date(Message.created_at).label("day"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+            func.count(Message.id).label("msgs"),
+        )
+        .where(Message.created_at >= week_ago)
+        .group_by(func.date(Message.created_at))
+        .order_by(func.date(Message.created_at))
+    )
+    cost_trend_7d = [
+        {
+            "date": str(r.day),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+            "message_count": int(r.msgs or 0),
+        }
+        for r in cost_q.all()
+    ]
+
+    return {
+        "dau": dau,
+        "wau": wau,
+        "mau": mau,
+        "total_users": total_users,
+        "new_users_30d": new_users_30d,
+        "top_agents": top_agents,
+        "top_tools": top_tools,
+        "cost_trend_7d": cost_trend_7d,
+    }

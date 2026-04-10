@@ -50,6 +50,9 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP"
             ))
             await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_users_auth0_sub ON users (auth0_sub)"
             ))
             await conn.execute(text(

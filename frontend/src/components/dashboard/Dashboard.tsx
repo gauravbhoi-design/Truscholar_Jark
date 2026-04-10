@@ -22,6 +22,11 @@ interface Props {
 export default function Dashboard({ user }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
 
+  // Tabs the user has visited at least once. ChatPanel below is kept
+  // mounted (and hidden via CSS) once visited so its messages, input
+  // draft, and live event stream survive a tab switch.
+  const [visited, setVisited] = useState<Set<TabId>>(new Set(["overview"]));
+
   // Listen for navigation events from other components (e.g., Quick Actions)
   useEffect(() => {
     const handler = (e: CustomEvent<TabId>) => {
@@ -30,6 +35,16 @@ export default function Dashboard({ user }: Props) {
     window.addEventListener("navigate-tab", handler as EventListener);
     return () => window.removeEventListener("navigate-tab", handler as EventListener);
   }, []);
+
+  // Track visits so the chat panel mounts on first click and stays mounted.
+  useEffect(() => {
+    setVisited((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
 
   const isAdmin = user.role === "admin";
 
@@ -69,7 +84,17 @@ export default function Dashboard({ user }: Props) {
 
         <div className="flex-1 overflow-hidden">
           {activeTab === "overview" && <OverviewPanel />}
-          {activeTab === "chat" && <ChatPanel />}
+
+          {/* Chat panel stays mounted across tab switches so the user's
+              typed query, message history, and live event stream are not
+              wiped when they hop over to another tab. Lazy-mounted on
+              first visit. */}
+          {visited.has("chat") && (
+            <div className={activeTab === "chat" ? "h-full" : "hidden"}>
+              <ChatPanel />
+            </div>
+          )}
+
           {activeTab === "agents" && <AgentStatusPanel />}
           {activeTab === "audit" && <AuditLogPanel />}
           {activeTab === "repos" && <RepoSelector />}
