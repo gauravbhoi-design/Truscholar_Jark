@@ -289,31 +289,73 @@ async def zoho_debug(
     if not token:
         return {"step": "token", "ok": False, "error": "Zoho not connected"}
 
-    # ── First: probe candidate bases to find one that returns 200 ──
-    candidates = [
-        "https://sprintsapi.zoho.in/zsapi",
-        "https://sprintsapi.zoho.com/zsapi",
-        "https://sprintsapi.zoho.eu/zsapi",
-        "https://sprintsapi.zoho.com.au/zsapi",
-        "https://sprintsapi.zoho.jp/zsapi",
-        "https://sprints.zoho.in/zsapi",  # legacy / what we had before
+    # ── First: probe a matrix of (host, path_prefix) combinations ──
+    # 7404 means Zoho couldn't match the URL shape. We need to find the
+    # right combination of host and path prefix. Zoho Projects uses
+    # /restapi/; Zoho Sprints might use /zsapi/, /restapi/, or the
+    # unified /sprints/v1/ gateway on www.zohoapis.*.
+    hosts = [
+        "https://sprintsapi.zoho.in",
+        "https://sprintsapi.zoho.com",
+        "https://sprintsapi.zoho.eu",
+        "https://sprints.zoho.in",
+        "https://sprints.zoho.com",
+        "https://www.zohoapis.in",
+        "https://www.zohoapis.com",
     ]
+    path_prefixes = [
+        "/zsapi",
+        "/zsapi/latest",
+        "/zsapi/v1",
+        "/restapi",
+        "/restapi/v1",
+        "/sprints/v1",
+        "",  # no prefix
+    ]
+    # Also try a couple of endpoint shapes under each prefix
+    endpoint_suffixes = [
+        "/portals/",
+        "/portals",
+    ]
+
     headers = {"Authorization": f"Zoho-oauthtoken {token}", "Content-Type": "application/json"}
     probe_results = []
     working_base = None
-    async with httpx.AsyncClient(timeout=10) as http:
-        for base in candidates:
-            try:
-                resp = await http.get(f"{base}/portals/", headers=headers)
-                probe_results.append({
-                    "base": base,
-                    "status": resp.status_code,
-                    "body_preview": resp.text[:200],
-                })
-                if resp.status_code == 200 and not working_base:
-                    working_base = base
-            except Exception as e:
-                probe_results.append({"base": base, "error": str(e)[:200]})
+
+    async with httpx.AsyncClient(timeout=8) as http:
+        for host in hosts:
+            for prefix in path_prefixes:
+                for suffix in endpoint_suffixes:
+                    url = f"{host}{prefix}{suffix}"
+                    try:
+                        resp = await http.get(url, headers=headers)
+                    except Exception as e:
+                        probe_results.append({"url": url, "error": str(e)[:150]})
+                        continue
+
+                    body = resp.text[:150]
+                    probe_results.append({
+                        "url": url,
+                        "status": resp.status_code,
+                        "body": body,
+                    })
+                    # A 200 is the goal. A 401 or 403 also means the URL
+                    # shape is correct (Zoho parsed it) but auth failed —
+                    # still useful signal. We prefer 200 but record the
+                    # first non-7404 as a strong candidate.
+                    if resp.status_code == 200 and not working_base:
+                        working_base = f"{host}{prefix}"
+                    elif (
+                        resp.status_code in (401, 403)
+                        and "7404" not in body
+                        and not working_base
+                    ):
+                        working_base = f"{host}{prefix}"
+
+    # Keep only the interesting probe results (non-7404) in the response
+    # so the JSON isn't overwhelming. 7404 results are counted instead.
+    interesting = [p for p in probe_results if "7404" not in p.get("body", "")]
+    total_7404 = len(probe_results) - len(interesting)
 
     # ── Then: walk the chain on the working base (or configured one) ──
     from app.mcp.zoho import ZohoSprintsMCPClient
@@ -333,7 +375,9 @@ async def zoho_debug(
     chain: dict = {
         "configured_base": settings.zoho_sprints_api_base,
         "working_base": working_base,
-        "probe_results": probe_results,
+        "total_probes": len(probe_results),
+        "probes_returning_7404": total_7404,
+        "interesting_probes": interesting,  # Only non-7404 responses
     }
 
     if "error" in portals or not portals.get("portals"):
