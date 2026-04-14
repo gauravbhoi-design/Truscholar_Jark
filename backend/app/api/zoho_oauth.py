@@ -313,13 +313,11 @@ async def get_active_sprint_data(
         workspace_id = workspace_id or cfg["workspace_id"]
         project_id = project_id or cfg["project_id"]
 
-    if not workspace_id or not project_id:
+    if not workspace_id:
         return {
             "error": (
-                "Zoho Workspace ID and Project ID are not configured. "
-                "Open Settings → Zoho Sprints. Workspace ID and User ID "
-                "are on your Zoho My Account page. Project ID is in the "
-                "URL when you open any project in Zoho Sprints."
+                "Zoho Workspace ID is not configured. Open Settings → "
+                "Zoho Sprints and paste it from your Zoho My Account page."
             ),
             "sprint": None,
             "items": [],
@@ -327,6 +325,33 @@ async def get_active_sprint_data(
 
     from app.mcp.zoho import ZohoSprintsMCPClient
     client = ZohoSprintsMCPClient(access_token=token)
+
+    # If project_id isn't set, auto-discover the first project in the
+    # workspace via the project-groups chain.
+    if not project_id:
+        all_projects = await client.list_all_projects(workspace_id)
+        if "error" in all_projects:
+            return {
+                "error": f"Could not list projects: {all_projects['error']}",
+                "sprint": None,
+                "items": [],
+            }
+        projects = all_projects.get("projects", [])
+        if not projects:
+            return {
+                "error": "No projects found in this workspace.",
+                "sprint": None,
+                "items": [],
+                "debug_hint": "Run /auth/zoho/debug/discover to see the raw response.",
+            }
+        project_id = projects[0]["id"]
+        logger.info(
+            "Auto-discovered project for sprint fetch",
+            workspace_id=workspace_id,
+            project_id=project_id,
+            name=projects[0].get("name"),
+        )
+
     # workspace_id maps to the URL path segment Zoho calls `team`
     return await client.get_active_sprint_for_project(workspace_id, project_id)
 
@@ -345,6 +370,68 @@ async def get_zoho_portals(
     from app.mcp.zoho import ZohoSprintsMCPClient
     client = ZohoSprintsMCPClient(access_token=token)
     return await client.get_portals()
+
+
+@router.get("/debug/discover")
+async def zoho_debug_discover(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Walk the discovery chain with the user's saved workspace_id.
+
+    Uses the confirmed-working endpoints to auto-discover projects
+    and then attempts to list sprints for each. Returns every step's
+    result so we can see exactly where the chain breaks.
+    """
+    user_id = user.get("sub", user.get("login", ""))
+    token = await get_zoho_access_token(user_id, db)
+    if not token:
+        return {"error": "Zoho not connected"}
+
+    cfg = await _get_zoho_config(user_id, db)
+    workspace_id = cfg.get("workspace_id")
+    if not workspace_id:
+        return {"error": "Workspace ID not configured. Set it in Settings."}
+
+    from app.mcp.zoho import ZohoSprintsMCPClient
+    client = ZohoSprintsMCPClient(access_token=token)
+
+    # Step 1: list project groups
+    groups_result = await client.list_project_groups(workspace_id)
+    if "error" in groups_result:
+        return {"step": "project_groups", "ok": False, "result": groups_result}
+
+    groups = groups_result.get("groups", [])
+    if not groups:
+        return {"step": "project_groups", "ok": False, "reason": "no groups returned"}
+
+    # Step 2: for each group, list projects
+    projects_per_group = []
+    all_projects = []
+    for group in groups:
+        projects_result = await client.list_projects_in_group(workspace_id, group["id"])
+        projects_per_group.append({
+            "group_id": group["id"],
+            "group_name": group["name"],
+            "result": projects_result,
+        })
+        if "error" not in projects_result:
+            for p in projects_result.get("projects", []):
+                all_projects.append({**p, "group_name": group["name"]})
+
+    # Step 3: for the first discovered project, try to list sprints
+    sprint_result = None
+    if all_projects:
+        first_project = all_projects[0]
+        sprint_result = await client.get_sprints_for_project(workspace_id, first_project["id"])
+
+    return {
+        "workspace_id": workspace_id,
+        "step1_groups": groups,
+        "step2_projects_per_group": projects_per_group,
+        "step3_all_projects_flat": all_projects,
+        "step4_first_project_sprints": sprint_result,
+    }
 
 
 @router.get("/debug/exact")

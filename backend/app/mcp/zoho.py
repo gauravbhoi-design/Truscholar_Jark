@@ -112,23 +112,174 @@ class ZohoSprintsMCPClient:
             ]
         }
 
+    # ─── Auto-discovery: groups → projects → sprints ──────────────────
+
+    async def list_project_groups(self, workspace_id: str) -> dict:
+        """List project groups in a workspace.
+
+        Confirmed-working URL shape:
+        GET /zsapi/team/{workspace_id}/projectgroups/?action=data
+        """
+        data = await self._request(
+            "GET",
+            f"/team/{workspace_id}/projectgroups/",
+            params={"action": "data", "index": "1", "range": "250"},
+        )
+        if "error" in data:
+            return data
+
+        logger.info("Zoho project groups response keys", keys=list(data.keys())[:20])
+
+        group_ids = data.get("groupIds", [])
+        group_obj = data.get("groupJObj", {})
+        group_prop = data.get("group_prop", {})
+        name_idx = group_prop.get("groupName", 0)
+        default_idx = group_prop.get("isDefault", 1)
+
+        groups = []
+        for gid in group_ids:
+            values = group_obj.get(gid, [])
+            groups.append({
+                "id": gid,
+                "name": values[name_idx] if len(values) > name_idx else "",
+                "is_default": bool(values[default_idx]) if len(values) > default_idx else False,
+            })
+
+        return {"groups": groups}
+
+    async def list_projects_in_group(self, workspace_id: str, group_id: str) -> dict:
+        """List projects within a project group.
+
+        URL shape guessed from the pattern confirmed for project groups.
+        Tries a few path/action combinations and returns the first 200.
+        """
+        candidates = [
+            (
+                f"/team/{workspace_id}/projectgroups/{group_id}/projects/",
+                {"action": "data", "index": "1", "range": "250"},
+            ),
+            (
+                f"/team/{workspace_id}/projects/",
+                {"action": "data", "groupId": group_id, "index": "1", "range": "250"},
+            ),
+            (
+                f"/team/{workspace_id}/projects/",
+                {"action": "allprojects", "groupId": group_id, "index": "1", "range": "250"},
+            ),
+            (
+                f"/team/{workspace_id}/projects/",
+                {"action": "data", "index": "1", "range": "250"},
+            ),
+        ]
+
+        data = None
+        last_error = None
+        for path, params in candidates:
+            resp = await self._request("GET", path, params=params)
+            if "error" not in resp:
+                data = resp
+                logger.info(
+                    "Zoho projects-in-group candidate matched",
+                    path=path,
+                    params=params,
+                )
+                break
+            last_error = resp["error"]
+            if "7404" not in last_error:
+                break
+
+        if data is None:
+            return {"error": last_error or "No working project-list endpoint found"}
+
+        logger.info(
+            "Zoho projects-in-group response keys",
+            group_id=group_id,
+            keys=list(data.keys())[:20],
+        )
+
+        # Zoho's usual shape: ids list + JObj + prop index
+        project_ids = data.get("projectIds", []) or data.get("projIds", [])
+        project_obj = data.get("projectJObj", {}) or data.get("projJObj", {})
+        project_prop = data.get("project_prop", {}) or data.get("proj_prop", {})
+
+        name_idx = project_prop.get("projectName", 0) or project_prop.get("projName", 0)
+
+        projects = []
+        for pid in project_ids:
+            values = project_obj.get(pid, [])
+            projects.append({
+                "id": pid,
+                "name": values[name_idx] if len(values) > name_idx else "",
+                "raw": values,
+            })
+
+        return {
+            "projects": projects,
+            "raw_response_keys": list(data.keys())[:20],
+        }
+
+    async def list_all_projects(self, workspace_id: str) -> dict:
+        """Walk every project group and collect all projects across them."""
+        groups_data = await self.list_project_groups(workspace_id)
+        if "error" in groups_data:
+            return groups_data
+
+        all_projects = []
+        for group in groups_data.get("groups", []):
+            projects_data = await self.list_projects_in_group(workspace_id, group["id"])
+            if "error" in projects_data:
+                logger.warning(
+                    "Failed to list projects in group",
+                    group_id=group["id"],
+                    error=projects_data.get("error"),
+                )
+                continue
+            for p in projects_data.get("projects", []):
+                p["group_name"] = group["name"]
+                p["group_id"] = group["id"]
+                all_projects.append(p)
+
+        return {"projects": all_projects}
+
     # ─── Sprint discovery via team_id + project_id (confirmed working) ─
 
     async def get_sprints_for_project(self, team_id: str, project_id: str) -> dict:
         """List sprints for a specific project within a team.
 
-        This uses the confirmed-working URL shape:
-        /zsapi/team/{team_id}/projects/{project_id}/sprints/?action=data
+        Confirmed URL shape from the Zoho web UI:
+        /zsapi/team/{team_id}/projects/{project_id}/sprints/{sprint_id}/...
 
-        team_id and project_id must be supplied by the caller — either
-        configured by the user in Settings, or discovered via a
-        bootstrap call we haven't found yet.
+        For listing (no sprint_id), Zoho uses action-based query params
+        and the action name varies per endpoint. We try the most
+        likely ones in order and return the first that responds.
         """
-        data = await self._request(
-            "GET",
-            f"/team/{team_id}/projects/{project_id}/sprints/",
-            params={"action": "data", "index": "1", "range": "250"},
-        )
+        path = f"/team/{team_id}/projects/{project_id}/sprints/"
+
+        # Try the most likely action names in order. First 200 wins.
+        # `data` is the generic Zoho list action (confirmed on
+        # /projectgroups/ and /priority/). Others are fallbacks.
+        candidate_actions = ["data", "allsprints", "sprintlist", "sprintsinproject"]
+
+        data = None
+        last_error = None
+        for action in candidate_actions:
+            resp = await self._request(
+                "GET",
+                path,
+                params={"action": action, "index": "1", "range": "250"},
+            )
+            if "error" not in resp:
+                data = resp
+                logger.info("Zoho sprint list action matched", action=action)
+                break
+            last_error = resp["error"]
+            # 7404 "URL wrong" means wrong action name — keep trying.
+            # Other errors (auth, permission) won't improve with another action name.
+            if "7404" not in last_error:
+                break
+
+        if data is None:
+            return {"error": last_error or "Zoho sprint list: no action name matched"}
         if "error" in data:
             return data
 
