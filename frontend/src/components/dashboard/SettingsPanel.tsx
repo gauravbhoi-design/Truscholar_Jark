@@ -721,6 +721,10 @@ function ZohoConnectionCard() {
   const [status, setStatus] = useState<{ connected: boolean; email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [teamId, setTeamId] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configSaved, setConfigSaved] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/auth/zoho/status`, { headers: getAuthHeader() })
@@ -728,7 +732,34 @@ function ZohoConnectionCard() {
       .then(setStatus)
       .catch(() => setStatus({ connected: false }))
       .finally(() => setLoading(false));
+
+    // Load saved team_id + project_id config
+    fetch(`${API_URL}/auth/zoho/config`, { headers: getAuthHeader() })
+      .then((r) => r.ok ? r.json() : { team_id: "", project_id: "" })
+      .then((cfg) => {
+        setTeamId(cfg.team_id || "");
+        setProjectId(cfg.project_id || "");
+      })
+      .catch(() => {});
   }, []);
+
+  const saveConfig = async () => {
+    setSavingConfig(true);
+    setConfigSaved(false);
+    try {
+      const res = await fetch(`${API_URL}/auth/zoho/config`, {
+        method: "PATCH",
+        headers: getAuthHeader(),
+        body: JSON.stringify({ team_id: teamId, project_id: projectId }),
+      });
+      if (res.ok) {
+        setConfigSaved(true);
+        setTimeout(() => setConfigSaved(false), 2000);
+      }
+    } finally {
+      setSavingConfig(false);
+    }
+  };
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -782,13 +813,65 @@ function ZohoConnectionCard() {
       </div>
       <div className="p-4">
         {status?.connected ? (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {status.email && (
               <div>
                 <p className="text-xs text-muted-foreground">Zoho Account</p>
                 <p className="text-sm font-medium">{status.email}</p>
               </div>
             )}
+
+            {/* Manual team_id + project_id config.
+                Zoho doesn't expose a documented OAuth endpoint to list
+                them automatically, so users paste them from their Zoho
+                Sprints URL. */}
+            <div className="border-t pt-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium">Sprint Board Configuration</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Find these in your Zoho Sprints URL:{" "}
+                  <span className="font-mono">sprints.zoho.in/workspace/.../team/<b>TEAM_ID</b>/projects/<b>PROJECT_ID</b></span>
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-muted-foreground font-medium">Team ID</label>
+                <input
+                  type="text"
+                  value={teamId}
+                  onChange={(e) => setTeamId(e.target.value)}
+                  placeholder="e.g. 60009511678"
+                  className="w-full px-2.5 py-1.5 text-xs rounded border bg-background font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-muted-foreground font-medium">Project ID</label>
+                <input
+                  type="text"
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  placeholder="e.g. 16176000000006001"
+                  className="w-full px-2.5 py-1.5 text-xs rounded border bg-background font-mono"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={saveConfig}
+                  disabled={savingConfig || !teamId.trim() || !projectId.trim()}
+                  className="px-3 py-1.5 text-xs rounded bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50"
+                >
+                  {savingConfig ? "Saving…" : "Save Config"}
+                </button>
+                {configSaved && (
+                  <span className="text-xs text-green-500 flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> Saved
+                  </span>
+                )}
+              </div>
+            </div>
+
             <button
               onClick={handleDisconnect}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10"

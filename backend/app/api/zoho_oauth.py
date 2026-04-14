@@ -218,39 +218,109 @@ async def get_zoho_access_token(user_id: str, db: AsyncSession) -> str | None:
     return resp.json().get("access_token")
 
 
+# ─── Config (team_id + project_id) ─────────────────────────────────
+#
+# Zoho Sprints does not expose a documented OAuth endpoint for
+# discovering the user's teams/projects. Until we find one, users
+# paste their team_id and project_id from the Zoho UI into Settings
+# (the IDs are visible in the URL when they browse Zoho Sprints:
+# sprints.zoho.in/workspace/<slug>/team/<team_id>/projects/<project_id>).
+# We persist them as user preferences keyed on the JWT sub.
+
+_ZOHO_TEAM_KEY = "zoho_team_id"
+_ZOHO_PROJECT_KEY = "zoho_project_id"
+
+
+async def _get_zoho_config(user_id: str, db: AsyncSession) -> dict:
+    from app.services.memory import MemoryService
+
+    memory = MemoryService(db=db, user_id=user_id)
+    prefs = await memory.get_all_preferences()
+    return {
+        "team_id": prefs.get(_ZOHO_TEAM_KEY, ""),
+        "project_id": prefs.get(_ZOHO_PROJECT_KEY, ""),
+    }
+
+
+@router.get("/config")
+async def get_zoho_config(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the user's saved Zoho team_id + project_id (or empty)."""
+    user_id = user.get("sub", user.get("login", ""))
+    return await _get_zoho_config(user_id, db)
+
+
+@router.patch("/config")
+async def set_zoho_config(
+    payload: dict,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save the user's Zoho team_id and/or project_id.
+
+    Body: {"team_id": "60009511678", "project_id": "16176000000006001"}
+    Either field may be omitted to update just one.
+    """
+    from app.services.memory import MemoryService
+
+    user_id = user.get("sub", user.get("login", ""))
+    memory = MemoryService(db=db, user_id=user_id)
+
+    team_id = (payload.get("team_id") or "").strip()
+    project_id = (payload.get("project_id") or "").strip()
+
+    if "team_id" in payload:
+        await memory.set_preference(_ZOHO_TEAM_KEY, team_id)
+    if "project_id" in payload:
+        await memory.set_preference(_ZOHO_PROJECT_KEY, project_id)
+
+    await db.commit()
+    return await _get_zoho_config(user_id, db)
+
+
 # ─── Sprints Data Endpoints (for dashboard) ────────────────────────
 
 
 @router.get("/sprints/active")
 async def get_active_sprint_data(
-    portal_id: str = "",
     team_id: str = "",
+    project_id: str = "",
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get active sprint data for the dashboard."""
+    """Get active sprint data for the dashboard.
+
+    team_id and project_id come from the user's Settings config unless
+    explicitly overridden via query params.
+    """
     user_id = user.get("sub", user.get("login", ""))
     token = await get_zoho_access_token(user_id, db)
     if not token:
         raise HTTPException(status_code=403, detail="Zoho not connected")
 
+    # Load from saved config if not provided in the query
+    if not team_id or not project_id:
+        cfg = await _get_zoho_config(user_id, db)
+        team_id = team_id or cfg["team_id"]
+        project_id = project_id or cfg["project_id"]
+
+    if not team_id or not project_id:
+        return {
+            "error": (
+                "Zoho team_id and project_id not configured. "
+                "Open Settings → Zoho Sprints and paste them from your "
+                "Zoho Sprints URL (sprints.zoho.in/workspace/<slug>/team/"
+                "<team_id>/projects/<project_id>)."
+            ),
+            "sprint": None,
+            "items": [],
+        }
+
     from app.mcp.zoho import ZohoSprintsMCPClient
     client = ZohoSprintsMCPClient(access_token=token)
-
-    # If no portal/team specified, get first available
-    if not portal_id:
-        portals = await client.get_portals()
-        if "error" in portals or not portals.get("portals"):
-            return portals
-        portal_id = portals["portals"][0]["id"]
-
-    if not team_id:
-        teams = await client.get_teams(portal_id)
-        if "error" in teams or not teams.get("teams"):
-            return teams
-        team_id = teams["teams"][0]["id"]
-
-    return await client.get_active_sprint(portal_id, team_id)
+    return await client.get_active_sprint_for_project(team_id, project_id)
 
 
 @router.get("/portals")
