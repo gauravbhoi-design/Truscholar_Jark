@@ -721,7 +721,8 @@ function ZohoConnectionCard() {
   const [status, setStatus] = useState<{ connected: boolean; email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
-  const [teamId, setTeamId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [zohoUserId, setZohoUserId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
@@ -733,11 +734,12 @@ function ZohoConnectionCard() {
       .catch(() => setStatus({ connected: false }))
       .finally(() => setLoading(false));
 
-    // Load saved team_id + project_id config
+    // Load saved Zoho config (workspace_id + user_id + project_id)
     fetch(`${API_URL}/auth/zoho/config`, { headers: getAuthHeader() })
-      .then((r) => r.ok ? r.json() : { team_id: "", project_id: "" })
+      .then((r) => r.ok ? r.json() : { workspace_id: "", zoho_user_id: "", project_id: "" })
       .then((cfg) => {
-        setTeamId(cfg.team_id || "");
+        setWorkspaceId(cfg.workspace_id || "");
+        setZohoUserId(cfg.zoho_user_id || "");
         setProjectId(cfg.project_id || "");
       })
       .catch(() => {});
@@ -750,7 +752,11 @@ function ZohoConnectionCard() {
       const res = await fetch(`${API_URL}/auth/zoho/config`, {
         method: "PATCH",
         headers: getAuthHeader(),
-        body: JSON.stringify({ team_id: teamId, project_id: projectId }),
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          zoho_user_id: zohoUserId,
+          project_id: projectId,
+        }),
       });
       if (res.ok) {
         setConfigSaved(true);
@@ -821,26 +827,39 @@ function ZohoConnectionCard() {
               </div>
             )}
 
-            {/* Manual team_id + project_id config.
-                Zoho doesn't expose a documented OAuth endpoint to list
-                them automatically, so users paste them from their Zoho
-                Sprints URL. */}
+            {/* Manual Zoho IDs — workspace_id, user_id, project_id.
+                Zoho doesn't expose a documented OAuth endpoint to
+                auto-discover these, so users paste them from their
+                Zoho Sprints "My Account" page and project URL. */}
             <div className="border-t pt-4 space-y-3">
               <div>
                 <p className="text-xs font-medium">Sprint Board Configuration</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Find these in your Zoho Sprints URL:{" "}
-                  <span className="font-mono">sprints.zoho.in/workspace/.../team/<b>TEAM_ID</b>/projects/<b>PROJECT_ID</b></span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  <b>Workspace ID</b> and <b>User ID</b> are on your Zoho Sprints{" "}
+                  <span className="font-mono">My Account</span> page.<br />
+                  <b>Project ID</b> is in the URL when you open any project:{" "}
+                  <span className="font-mono">sprints.zoho.in/workspace/.../team/.../projects/<b>PROJECT_ID</b></span>
                 </p>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] text-muted-foreground font-medium">Team ID</label>
+                <label className="text-[11px] text-muted-foreground font-medium">Workspace ID</label>
                 <input
                   type="text"
-                  value={teamId}
-                  onChange={(e) => setTeamId(e.target.value)}
+                  value={workspaceId}
+                  onChange={(e) => setWorkspaceId(e.target.value)}
                   placeholder="e.g. 60009511678"
+                  className="w-full px-2.5 py-1.5 text-xs rounded border bg-background font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-muted-foreground font-medium">User ID</label>
+                <input
+                  type="text"
+                  value={zohoUserId}
+                  onChange={(e) => setZohoUserId(e.target.value)}
+                  placeholder="e.g. 60063332063"
                   className="w-full px-2.5 py-1.5 text-xs rounded border bg-background font-mono"
                 />
               </div>
@@ -859,7 +878,7 @@ function ZohoConnectionCard() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={saveConfig}
-                  disabled={savingConfig || !teamId.trim() || !projectId.trim()}
+                  disabled={savingConfig || !workspaceId.trim() || !projectId.trim()}
                   className="px-3 py-1.5 text-xs rounded bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50"
                 >
                   {savingConfig ? "Saving…" : "Save Config"}
