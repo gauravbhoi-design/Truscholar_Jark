@@ -1013,3 +1013,354 @@ async def get_platform_activity(
         "top_tools": top_tools,
         "cost_trend_7d": cost_trend_7d,
     }
+
+
+# ─── Billing Dashboard ─────────────────────────────────────────────────────
+
+
+@router.get("/admin/billing")
+async def get_billing_dashboard(
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin billing dashboard data.
+
+    Returns platform-wide spend totals (today/7d/30d/MTD/all-time),
+    daily cost trend (last 30 days), per-agent breakdown,
+    per-model breakdown, and top 10 users by spend — all driven
+    directly off the messages table.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
+
+    from app.models.database import Conversation, Message, User
+
+    now = datetime.now()
+    day_ago = now - timedelta(days=1)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+    mtd_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # ─── Spend totals at various time horizons ───────────────────────
+    async def _window_totals(since):
+        q = select(
+            func.coalesce(func.sum(Message.cost_usd), 0.0),
+            func.coalesce(func.sum(Message.input_tokens), 0),
+            func.coalesce(func.sum(Message.output_tokens), 0),
+            func.count(Message.id),
+        ).where(Message.cost_usd > 0)
+        if since is not None:
+            q = q.where(Message.created_at >= since)
+        row = (await db.execute(q)).one()
+        return {
+            "cost_usd": round(float(row[0] or 0.0), 4),
+            "input_tokens": int(row[1] or 0),
+            "output_tokens": int(row[2] or 0),
+            "message_count": int(row[3] or 0),
+        }
+
+    today = await _window_totals(day_ago)
+    last_7d = await _window_totals(week_ago)
+    last_30d = await _window_totals(month_ago)
+    mtd = await _window_totals(mtd_start)
+    all_time = await _window_totals(None)
+
+    # ─── Daily trend (last 30 days) ──────────────────────────────────
+    trend_q = await db.execute(
+        select(
+            func.date(Message.created_at).label("day"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+            func.coalesce(func.sum(Message.input_tokens), 0).label("in_tok"),
+            func.coalesce(func.sum(Message.output_tokens), 0).label("out_tok"),
+            func.count(Message.id).label("msgs"),
+        )
+        .where(Message.created_at >= month_ago)
+        .where(Message.cost_usd > 0)
+        .group_by(func.date(Message.created_at))
+        .order_by(func.date(Message.created_at))
+    )
+    daily_trend = [
+        {
+            "date": str(r.day),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+            "input_tokens": int(r.in_tok or 0),
+            "output_tokens": int(r.out_tok or 0),
+            "message_count": int(r.msgs or 0),
+        }
+        for r in trend_q.all()
+    ]
+
+    # ─── Per-agent breakdown ──────────────────────────────────────────
+    agent_q = await db.execute(
+        select(
+            Message.agent_name,
+            func.count(Message.id).label("calls"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+            func.coalesce(func.sum(Message.input_tokens), 0).label("in_tok"),
+            func.coalesce(func.sum(Message.output_tokens), 0).label("out_tok"),
+            func.coalesce(func.avg(Message.cost_usd), 0.0).label("avg_cost"),
+        )
+        .where(Message.agent_name.isnot(None))
+        .where(Message.cost_usd > 0)
+        .group_by(Message.agent_name)
+        .order_by(func.sum(Message.cost_usd).desc())
+    )
+    per_agent = [
+        {
+            "agent": r.agent_name,
+            "calls": int(r.calls),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+            "input_tokens": int(r.in_tok or 0),
+            "output_tokens": int(r.out_tok or 0),
+            "avg_cost_usd": round(float(r.avg_cost or 0.0), 6),
+        }
+        for r in agent_q.all()
+    ]
+
+    # ─── Per-model breakdown ──────────────────────────────────────────
+    model_q = await db.execute(
+        select(
+            Message.model,
+            func.count(Message.id).label("calls"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+            func.coalesce(func.sum(Message.input_tokens), 0).label("in_tok"),
+            func.coalesce(func.sum(Message.output_tokens), 0).label("out_tok"),
+        )
+        .where(Message.model.isnot(None))
+        .where(Message.cost_usd > 0)
+        .group_by(Message.model)
+        .order_by(func.sum(Message.cost_usd).desc())
+    )
+    per_model = [
+        {
+            "model": r.model,
+            "calls": int(r.calls),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+            "input_tokens": int(r.in_tok or 0),
+            "output_tokens": int(r.out_tok or 0),
+        }
+        for r in model_q.all()
+    ]
+
+    # ─── Top 10 users by spend ───────────────────────────────────────
+    top_users_q = await db.execute(
+        select(
+            User.id,
+            User.email,
+            User.name,
+            User.login,
+            User.avatar_url,
+            func.count(Message.id).label("msgs"),
+            func.coalesce(func.sum(Message.cost_usd), 0.0).label("cost"),
+            func.coalesce(func.sum(Message.input_tokens), 0).label("in_tok"),
+            func.coalesce(func.sum(Message.output_tokens), 0).label("out_tok"),
+        )
+        .join(Conversation, Conversation.user_id == User.id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Message.cost_usd > 0)
+        .group_by(User.id)
+        .order_by(func.sum(Message.cost_usd).desc())
+        .limit(10)
+    )
+    top_users = [
+        {
+            "id": str(r.id),
+            "email": r.email,
+            "name": r.name,
+            "login": r.login,
+            "avatar_url": r.avatar_url,
+            "message_count": int(r.msgs or 0),
+            "cost_usd": round(float(r.cost or 0.0), 4),
+            "input_tokens": int(r.in_tok or 0),
+            "output_tokens": int(r.out_tok or 0),
+        }
+        for r in top_users_q.all()
+    ]
+
+    # ─── Projected monthly spend ──────────────────────────────────────
+    # Simple linear extrapolation: MTD cost / days elapsed * days in month
+    import calendar as _cal
+
+    days_in_month = _cal.monthrange(now.year, now.month)[1]
+    days_elapsed = max(1, now.day)
+    projected_monthly = round(
+        (mtd["cost_usd"] / days_elapsed) * days_in_month,
+        2,
+    )
+
+    return {
+        "totals": {
+            "today": today,
+            "last_7d": last_7d,
+            "last_30d": last_30d,
+            "mtd": mtd,
+            "all_time": all_time,
+        },
+        "projected_monthly_usd": projected_monthly,
+        "daily_trend_30d": daily_trend,
+        "per_agent": per_agent,
+        "per_model": per_model,
+        "top_users": top_users,
+    }
+
+
+# ─── DB Inspector ───────────────────────────────────────────────────────────
+#
+# Lets an admin browse production Cloud SQL data without needing psql or
+# the Cloud SQL proxy. Returns row counts for every table and a sample of
+# the most recent rows from each, with sensitive columns masked.
+
+# Columns whose values are PII, secrets, or huge blobs — masked in output.
+_SENSITIVE_COLUMNS = {
+    "encrypted_refresh_token",
+    "key_hash",
+    "tool_input",
+    "tool_output",
+    "payload_summary",
+    "permissions",
+    "events",
+    "selected_repositories",
+    "metrics_data",
+    "scores",
+    "responses",
+    "context",
+    "extra_data",
+    "tool_calls",
+    "agents_used",
+    "result",
+    "content",  # Message bodies can be huge
+}
+
+# Tables we expose. Listed explicitly so a future model addition doesn't
+# accidentally leak data without review.
+_INSPECTABLE_TABLES = [
+    "users",
+    "conversations",
+    "messages",
+    "agent_audit_logs",
+    "agent_memories",
+    "user_preferences",
+    "cloud_credentials",
+    "plans",
+    "plan_steps",
+    "github_app_installations",
+    "webhook_events",
+    "api_keys",
+    "teams",
+    "metric_snapshots",
+    "metric_data_points",
+    "survey_responses",
+]
+
+
+def _mask_row(row: dict) -> dict:
+    """Mask sensitive columns and truncate large strings for display."""
+    out = {}
+    for k, v in row.items():
+        if k in _SENSITIVE_COLUMNS:
+            if v is None:
+                out[k] = None
+            elif isinstance(v, (dict, list)):
+                out[k] = f"<{type(v).__name__} {len(v)} items>"
+            elif isinstance(v, str):
+                out[k] = f"<masked, {len(v)} chars>"
+            else:
+                out[k] = "<masked>"
+        elif isinstance(v, str) and len(v) > 200:
+            out[k] = v[:200] + f"…[+{len(v) - 200} chars]"
+        elif hasattr(v, "isoformat"):  # datetime
+            out[k] = v.isoformat()
+        elif isinstance(v, uuid.UUID):
+            out[k] = str(v)
+        else:
+            out[k] = v
+    return out
+
+
+@router.get("/admin/db/inspect")
+async def db_inspect(
+    table: str | None = None,
+    limit: int = 10,
+    user: dict = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Browse Cloud SQL production data.
+
+    Without `?table=` returns a summary: every inspectable table with
+    its row count plus the column list. With `?table=name&limit=N`
+    returns the N most recent rows of that table (sorted by created_at
+    or id desc) with sensitive columns masked.
+    """
+    from sqlalchemy import text
+
+    safe_limit = max(1, min(limit, 100))
+
+    # ── Summary mode (no table specified) ──────────────────────────
+    if not table:
+        summary = []
+        for t in _INSPECTABLE_TABLES:
+            try:
+                count_q = await db.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                count = count_q.scalar() or 0
+                col_q = await db.execute(text(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_name = :t ORDER BY ordinal_position"
+                ), {"t": t})
+                columns = [{"name": c.column_name, "type": c.data_type} for c in col_q.all()]
+                summary.append({
+                    "table": t,
+                    "row_count": int(count),
+                    "columns": columns,
+                })
+            except Exception as e:
+                summary.append({"table": t, "error": str(e)[:200]})
+
+        total_rows = sum(s.get("row_count", 0) for s in summary)
+        return {
+            "database": settings.postgres_db if hasattr(settings, "postgres_db") else None,
+            "total_tables": len(summary),
+            "total_rows": total_rows,
+            "tables": summary,
+            "usage": "Append ?table=<name>&limit=<n> to fetch sample rows from a specific table.",
+        }
+
+    # ── Detail mode (table specified) ──────────────────────────────
+    if table not in _INSPECTABLE_TABLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Table '{table}' is not in the inspectable allowlist. "
+                   f"Allowed: {', '.join(_INSPECTABLE_TABLES)}",
+        )
+
+    # Find a column to sort by — prefer created_at, fall back to id
+    col_q = await db.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = :t"
+    ), {"t": table})
+    col_names = {c.column_name for c in col_q.all()}
+
+    if "created_at" in col_names:
+        order_by = "created_at DESC"
+    elif "installed_at" in col_names:
+        order_by = "installed_at DESC"
+    elif "connected_at" in col_names:
+        order_by = "connected_at DESC"
+    elif "id" in col_names:
+        order_by = "id DESC"
+    else:
+        order_by = "1"
+
+    rows_q = await db.execute(text(f"SELECT * FROM {table} ORDER BY {order_by} LIMIT :lim"), {"lim": safe_limit})
+    rows = [_mask_row(dict(r._mapping)) for r in rows_q.all()]
+
+    count_q = await db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+    total = int(count_q.scalar() or 0)
+
+    return {
+        "table": table,
+        "total_rows": total,
+        "returned": len(rows),
+        "ordered_by": order_by,
+        "rows": rows,
+    }

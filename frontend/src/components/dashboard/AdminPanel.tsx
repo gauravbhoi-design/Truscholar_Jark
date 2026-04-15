@@ -17,6 +17,9 @@ import {
   Github,
   Wrench,
   TrendingUp,
+  Database,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -86,7 +89,54 @@ interface UserDetail {
   cost_trend_30d: { date: string; cost_usd: number; message_count: number }[];
 }
 
+interface DbColumn {
+  name: string;
+  type: string;
+}
+interface DbTableSummary {
+  table: string;
+  row_count?: number;
+  columns?: DbColumn[];
+  error?: string;
+}
+interface DbInspectSummary {
+  database: string | null;
+  total_tables: number;
+  total_rows: number;
+  tables: DbTableSummary[];
+}
+interface DbInspectDetail {
+  table: string;
+  total_rows: number;
+  returned: number;
+  ordered_by: string;
+  rows: Record<string, unknown>[];
+}
+
+interface BillingWindow {
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  message_count: number;
+}
+
+interface BillingData {
+  totals: {
+    today: BillingWindow;
+    last_7d: BillingWindow;
+    last_30d: BillingWindow;
+    mtd: BillingWindow;
+    all_time: BillingWindow;
+  };
+  projected_monthly_usd: number;
+  daily_trend_30d: { date: string; cost_usd: number; input_tokens: number; output_tokens: number; message_count: number }[];
+  per_agent: { agent: string; calls: number; cost_usd: number; input_tokens: number; output_tokens: number; avg_cost_usd: number }[];
+  per_model: { model: string; calls: number; cost_usd: number; input_tokens: number; output_tokens: number }[];
+  top_users: { id: string; email: string; name: string; login: string | null; avatar_url: string | null; message_count: number; cost_usd: number; input_tokens: number; output_tokens: number }[];
+}
+
 const ROLES = ["admin", "engineer", "viewer"] as const;
+type AdminTab = "users" | "billing";
 
 // ─── Formatters ────────────────────────────────────────────────────────────
 
@@ -532,6 +582,501 @@ function UserDetailContent({ detail }: { detail: UserDetail }) {
   );
 }
 
+// ─── Billing dashboard ─────────────────────────────────────────────────────
+
+function BillingDashboard() {
+  const [data, setData] = useState<BillingData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/admin/billing`, { headers: getAuthHeader() });
+      if (!res.ok) {
+        setError(`Failed to load billing data (HTTP ${res.status})`);
+        return;
+      }
+      setData((await res.json()) as BillingData);
+    } catch {
+      setError("Backend not available");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="border rounded-lg p-6 bg-card flex items-start gap-3">
+        <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+        <div>
+          <div className="font-medium">Unable to load billing data</div>
+          <div className="text-sm text-muted-foreground mt-1">{error || "Empty response"}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const t = data.totals;
+  const trendMax = Math.max(...data.daily_trend_30d.map((d) => d.cost_usd), 0.0001);
+
+  return (
+    <div className="space-y-6">
+      {/* Header with refresh */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <DollarSign className="h-5 w-5 text-green-500" />
+            Cost & Billing
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Spend across every user, agent, and model — driven live from the messages table
+          </p>
+        </div>
+        <button
+          onClick={load}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-md hover:bg-accent"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
+      </div>
+
+      {/* Hero cards — spend windows */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <StatCard
+          title="Today"
+          value={formatUsd(t.today.cost_usd)}
+          subtitle={`${t.today.message_count} msgs`}
+          icon={DollarSign}
+          color="text-green-500"
+        />
+        <StatCard
+          title="Last 7 Days"
+          value={formatUsd(t.last_7d.cost_usd)}
+          subtitle={`${t.last_7d.message_count} msgs`}
+          icon={DollarSign}
+          color="text-green-500"
+        />
+        <StatCard
+          title="Last 30 Days"
+          value={formatUsd(t.last_30d.cost_usd)}
+          subtitle={`${t.last_30d.message_count} msgs`}
+          icon={DollarSign}
+          color="text-green-500"
+        />
+        <StatCard
+          title="Month-to-Date"
+          value={formatUsd(t.mtd.cost_usd)}
+          subtitle={`proj. ${formatUsd(data.projected_monthly_usd)} this month`}
+          icon={TrendingUp}
+          color="text-yellow-500"
+        />
+        <StatCard
+          title="All Time"
+          value={formatUsd(t.all_time.cost_usd)}
+          subtitle={`${t.all_time.message_count.toLocaleString()} msgs total`}
+          icon={DollarSign}
+          color="text-primary"
+        />
+      </div>
+
+      {/* Token totals */}
+      <div className="border rounded-lg bg-card p-4">
+        <div className="text-xs uppercase text-muted-foreground font-medium mb-2">
+          Token Usage (all time)
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div>
+            <div className="text-xs text-muted-foreground">Input tokens</div>
+            <div className="text-lg font-bold">
+              {t.all_time.input_tokens.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Output tokens</div>
+            <div className="text-lg font-bold">
+              {t.all_time.output_tokens.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Total tokens</div>
+            <div className="text-lg font-bold">
+              {(t.all_time.input_tokens + t.all_time.output_tokens).toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Avg cost / msg</div>
+            <div className="text-lg font-bold">
+              {formatUsd(
+                t.all_time.message_count > 0
+                  ? t.all_time.cost_usd / t.all_time.message_count
+                  : 0,
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Daily trend — bar chart */}
+      <div className="border rounded-lg bg-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs uppercase text-muted-foreground font-medium">
+            Daily Spend — Last 30 Days
+          </div>
+          <div className="text-xs text-muted-foreground">
+            peak {formatUsd(trendMax)}
+          </div>
+        </div>
+        {data.daily_trend_30d.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-6 text-center">
+            No activity in the last 30 days
+          </div>
+        ) : (
+          <div className="flex items-end gap-1 h-32">
+            {data.daily_trend_30d.map((d) => {
+              const h = (d.cost_usd / trendMax) * 100;
+              return (
+                <div
+                  key={d.date}
+                  className="flex-1 bg-primary/70 hover:bg-primary transition-colors rounded-t"
+                  style={{ height: `${Math.max(h, 2)}%` }}
+                  title={`${d.date}: ${formatUsd(d.cost_usd)} · ${d.message_count} msgs`}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Per-agent breakdown */}
+      <div className="border rounded-lg bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b">
+          <div className="text-xs uppercase text-muted-foreground font-medium">
+            Spend by Agent
+          </div>
+        </div>
+        {data.per_agent.length === 0 ? (
+          <div className="text-xs text-muted-foreground p-4 text-center">No agent activity yet</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium">Agent</th>
+                <th className="text-right px-4 py-2 font-medium">Calls</th>
+                <th className="text-right px-4 py-2 font-medium">Input tok</th>
+                <th className="text-right px-4 py-2 font-medium">Output tok</th>
+                <th className="text-right px-4 py-2 font-medium">Avg / call</th>
+                <th className="text-right px-4 py-2 font-medium">Total cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.per_agent.map((a) => (
+                <tr key={a.agent} className="border-t">
+                  <td className="px-4 py-2 font-medium">{a.agent}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{a.calls}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {a.input_tokens.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {a.output_tokens.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {formatUsd(a.avg_cost_usd)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums font-medium">
+                    {formatUsd(a.cost_usd)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Per-model breakdown */}
+      <div className="border rounded-lg bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b">
+          <div className="text-xs uppercase text-muted-foreground font-medium">Spend by Model</div>
+        </div>
+        {data.per_model.length === 0 ? (
+          <div className="text-xs text-muted-foreground p-4 text-center">No model activity yet</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium">Model</th>
+                <th className="text-right px-4 py-2 font-medium">Calls</th>
+                <th className="text-right px-4 py-2 font-medium">Input tok</th>
+                <th className="text-right px-4 py-2 font-medium">Output tok</th>
+                <th className="text-right px-4 py-2 font-medium">Total cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.per_model.map((m) => (
+                <tr key={m.model} className="border-t">
+                  <td className="px-4 py-2 font-mono text-xs">{m.model}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{m.calls}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {m.input_tokens.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {m.output_tokens.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums font-medium">
+                    {formatUsd(m.cost_usd)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Top users by spend */}
+      <div className="border rounded-lg bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b">
+          <div className="text-xs uppercase text-muted-foreground font-medium">
+            Top 10 Users by Spend
+          </div>
+        </div>
+        {data.top_users.length === 0 ? (
+          <div className="text-xs text-muted-foreground p-4 text-center">
+            No user spend recorded yet
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium">User</th>
+                <th className="text-right px-4 py-2 font-medium">Messages</th>
+                <th className="text-right px-4 py-2 font-medium">Tokens</th>
+                <th className="text-right px-4 py-2 font-medium">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.top_users.map((u, idx) => (
+                <tr key={u.id} className="border-t">
+                  <td className="px-4 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-xs w-4">#{idx + 1}</span>
+                      {u.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={u.avatar_url} alt={u.name} className="h-6 w-6 rounded-full" />
+                      ) : (
+                        <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
+                          {(u.name || u.email || "?").slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{u.name || u.login || "—"}</div>
+                        <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">{u.message_count}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {(u.input_tokens + u.output_tokens).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums font-medium">
+                    {formatUsd(u.cost_usd)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── DB inspector ──────────────────────────────────────────────────────────
+
+function DbInspector() {
+  const [open, setOpen] = useState(false);
+  const [summary, setSummary] = useState<DbInspectSummary | null>(null);
+  const [detail, setDetail] = useState<DbInspectDetail | null>(null);
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadSummary = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/admin/db/inspect`, { headers: getAuthHeader() });
+      if (!res.ok) {
+        setError(`Failed to load DB summary (HTTP ${res.status})`);
+        return;
+      }
+      setSummary((await res.json()) as DbInspectSummary);
+    } catch {
+      setError("Backend not available");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadTable = async (table: string) => {
+    setSelectedTable(table);
+    setLoading(true);
+    setError("");
+    setDetail(null);
+    try {
+      const res = await fetch(
+        `${API_URL}/admin/db/inspect?table=${encodeURIComponent(table)}&limit=20`,
+        { headers: getAuthHeader() },
+      );
+      if (!res.ok) {
+        setError(`Failed to load ${table} (HTTP ${res.status})`);
+        return;
+      }
+      setDetail((await res.json()) as DbInspectDetail);
+    } catch {
+      setError("Backend not available");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open && !summary) {
+      loadSummary();
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="border rounded-lg bg-card">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent/30"
+      >
+        <div className="flex items-center gap-2">
+          {open ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+          <Database className="h-4 w-4 text-primary" />
+          <span className="text-sm font-semibold">Database Inspector</span>
+          {summary && (
+            <span className="text-xs text-muted-foreground">
+              · {summary.total_tables} tables · {summary.total_rows.toLocaleString()} rows
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {open ? "Click table to inspect" : "Click to expand"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t p-4 space-y-4">
+          {loading && !detail && (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {error && (
+            <div className="text-xs text-destructive flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+
+          {summary && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {summary.tables.map((t) => (
+                <button
+                  key={t.table}
+                  onClick={() => loadTable(t.table)}
+                  className={`text-left border rounded px-3 py-2 text-xs hover:bg-accent ${
+                    selectedTable === t.table ? "border-primary bg-primary/5" : ""
+                  }`}
+                >
+                  <div className="font-medium font-mono">{t.table}</div>
+                  <div className="text-muted-foreground mt-0.5">
+                    {t.error ? (
+                      <span className="text-destructive">{t.error}</span>
+                    ) : (
+                      <>
+                        {t.row_count?.toLocaleString() ?? 0} rows · {t.columns?.length ?? 0} cols
+                      </>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {detail && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold font-mono">{detail.table}</div>
+                <div className="text-xs text-muted-foreground">
+                  showing {detail.returned} of {detail.total_rows.toLocaleString()} rows · ordered by {detail.ordered_by}
+                </div>
+              </div>
+              {detail.rows.length === 0 ? (
+                <div className="text-xs text-muted-foreground">Table is empty.</div>
+              ) : (
+                <div className="overflow-auto max-h-96 border rounded">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        {Object.keys(detail.rows[0]).map((col) => (
+                          <th key={col} className="text-left px-2 py-1 font-medium font-mono">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.rows.map((row, i) => (
+                        <tr key={i} className="border-t hover:bg-accent/20">
+                          {Object.values(row).map((v, j) => (
+                            <td
+                              key={j}
+                              className="px-2 py-1 font-mono align-top max-w-xs truncate"
+                              title={String(v ?? "")}
+                            >
+                              {v === null
+                                ? <span className="text-muted-foreground italic">null</span>
+                                : typeof v === "boolean"
+                                ? String(v)
+                                : String(v)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Main panel ────────────────────────────────────────────────────────────
 
 export function AdminPanel() {
@@ -542,6 +1087,7 @@ export function AdminPanel() {
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AdminTab>("users");
 
   const load = async () => {
     setLoading(true);
@@ -659,6 +1205,46 @@ export function AdminPanel() {
           </button>
         </div>
 
+        {/* Tab switcher */}
+        <div className="flex gap-1 border-b">
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              activeTab === "users"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Users & Activity
+            </span>
+            {activeTab === "users" && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("billing")}
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              activeTab === "billing"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              Cost & Billing
+            </span>
+            {activeTab === "billing" && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+        </div>
+
+        {activeTab === "billing" && <BillingDashboard />}
+
+        {activeTab === "users" && (
+          <>
         {/* Platform activity */}
         <PlatformActivityCard activity={activity} />
 
@@ -793,6 +1379,11 @@ export function AdminPanel() {
             Click any row for full activity drill-down
           </div>
         </div>
+
+        {/* DB inspector — collapsed by default, browse Cloud SQL data */}
+        <DbInspector />
+          </>
+        )}
       </div>
 
       {selectedUserId && (

@@ -52,6 +52,16 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER DEFAULT 0"
             ))
+            # Per-message token + model tracking for billing dashboard
+            await conn.execute(text(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS model VARCHAR(100)"
+            ))
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_users_auth0_sub ON users (auth0_sub)"
             ))

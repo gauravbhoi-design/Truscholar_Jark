@@ -16,7 +16,7 @@ from app.agents.engineering_metrics import EngineeringMetricsAgent
 from app.agents.performance import PerformanceAgent
 from app.agents.supervisor import SupervisorAgent
 from app.config import get_settings
-from app.models.database import CloudCredential
+from app.models.database import CloudCredential, Conversation, Message, User
 from app.models.schemas import (
     AgentName,
     AgentResponse,
@@ -48,6 +48,120 @@ class AgentOrchestrator:
         }
         self.supervisor = SupervisorAgent(agents=self.agents)
         self.memory = MemoryService(db=db, user_id=user.get("sub", user.get("login", ""))) if db else None
+
+    async def _resolve_db_user_id(self) -> uuid.UUID | None:
+        """Resolve the persisted User.id UUID for the caller.
+
+        Prefers the db_id embedded in the JWT (set by upsert_user_on_login).
+        Falls back to an email lookup so interactions still attribute
+        correctly for users whose JWT was minted before db_id was added.
+        """
+        if not self.db:
+            return None
+        db_id_raw = self.user.get("db_id")
+        if db_id_raw:
+            try:
+                return uuid.UUID(str(db_id_raw))
+            except (ValueError, TypeError):
+                pass
+        email = self.user.get("email")
+        if email:
+            result = await self.db.execute(select(User).where(User.email == email))
+            found = result.scalar_one_or_none()
+            if found:
+                return found.id
+        return None
+
+    async def _persist_chat_interaction(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        query: str,
+        final_response: str,
+        agents_used: list[str],
+        tool_calls: list[dict],
+        total_cost: float,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        model: str | None,
+    ) -> None:
+        """Persist a chat turn to conversations + messages.
+
+        Called from process_query and process_query_stream so the admin
+        panel can surface per-user spend, daily cost trends, per-agent
+        breakdowns, etc. Failures are logged but never bubble up — a
+        metric-write error must not break the user's chat experience.
+        """
+        if not self.db:
+            return
+
+        try:
+            db_user_id = await self._resolve_db_user_id()
+            if not db_user_id:
+                logger.warning(
+                    "Cannot persist chat interaction — no db user_id",
+                    sub=self.user.get("sub"),
+                )
+                return
+
+            # Upsert the conversation by id
+            existing = await self.db.execute(
+                select(Conversation).where(Conversation.id == conversation_id)
+            )
+            conv = existing.scalar_one_or_none()
+            if conv is None:
+                conv = Conversation(
+                    id=conversation_id,
+                    user_id=db_user_id,
+                    title=query[:200] if query else "New Conversation",
+                    total_cost_usd=float(total_cost),
+                )
+                self.db.add(conv)
+            else:
+                conv.total_cost_usd = (conv.total_cost_usd or 0.0) + float(total_cost)
+
+            # User turn (role=user, cost=0)
+            user_msg = Message(
+                conversation_id=conversation_id,
+                role="user",
+                content=query[:8000],
+                agent_name=None,
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+            )
+            self.db.add(user_msg)
+
+            # Assistant turn (cost + tokens attributed here)
+            primary_agent = agents_used[0] if agents_used else None
+            assistant_msg = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=(final_response or "")[:16000],
+                agent_name=primary_agent,
+                model=model,
+                tool_calls={"calls": tool_calls[:50]} if tool_calls else None,
+                cost_usd=float(total_cost),
+                input_tokens=int(total_input_tokens),
+                output_tokens=int(total_output_tokens),
+            )
+            self.db.add(assistant_msg)
+
+            await self.db.commit()
+            logger.info(
+                "Chat interaction persisted",
+                conversation_id=str(conversation_id),
+                cost_usd=total_cost,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                agents=agents_used,
+            )
+        except Exception as e:
+            logger.error("Failed to persist chat interaction", error=str(e))
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
 
     async def _enrich_user_with_credentials(self) -> dict:
         """Add GCP and GitHub tokens to user dict from DB if available."""
@@ -127,6 +241,9 @@ class AgentOrchestrator:
             results = []
             agents_used = []
             total_cost = 0.0
+            total_input_tokens = 0
+            total_output_tokens = 0
+            primary_model: str | None = None
             all_tool_calls = []
 
             # Execute agents (parallel for independent agents)
@@ -140,6 +257,10 @@ class AgentOrchestrator:
                 results.append(result)
                 agents_used.append(agent_name.value)
                 total_cost += result.get("cost_usd", 0.0)
+                total_input_tokens += int(result.get("input_tokens", 0) or 0)
+                total_output_tokens += int(result.get("output_tokens", 0) or 0)
+                if primary_model is None:
+                    primary_model = result.get("model")
                 all_tool_calls.extend(result.get("tool_calls", []))
 
             # Supervisor synthesizes final response
@@ -169,6 +290,21 @@ class AgentOrchestrator:
                 agents=agents_used,
                 elapsed_ms=elapsed_ms,
                 cost=total_cost,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+            )
+
+            # Persist to DB so admin billing dashboard sees this interaction
+            await self._persist_chat_interaction(
+                conversation_id=conversation_id,
+                query=query,
+                final_response=final_response or "",
+                agents_used=agents_used,
+                tool_calls=all_tool_calls,
+                total_cost=total_cost,
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                model=primary_model,
             )
 
             return AgentResponse(
@@ -241,6 +377,10 @@ class AgentOrchestrator:
         results = []
         agents_used = []
         total_cost = 0.0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        primary_model: str | None = None
+        all_tool_calls: list[dict] = []
 
         for agent_name in routing.agents:
             agent = self.agents.get(agent_name)
@@ -255,6 +395,11 @@ class AgentOrchestrator:
                 if event["type"] == "agent_result":
                     results.append(event["data"])
                     total_cost += event["data"].get("cost_usd", 0.0)
+                    total_input_tokens += int(event["data"].get("input_tokens", 0) or 0)
+                    total_output_tokens += int(event["data"].get("output_tokens", 0) or 0)
+                    if primary_model is None:
+                        primary_model = event["data"].get("model")
+                    all_tool_calls.extend(event["data"].get("tool_calls", []))
                 else:
                     # Forward all other events to the client
                     yield {"event": event["type"], "agent": event["agent"], "data": event["data"]}
@@ -282,6 +427,20 @@ class AgentOrchestrator:
             except Exception:
                 pass
 
+        # Persist the chat turn to conversations + messages so the
+        # admin billing dashboard can surface the cost.
+        await self._persist_chat_interaction(
+            conversation_id=conversation_id,
+            query=query,
+            final_response=final_response or "",
+            agents_used=agents_used,
+            tool_calls=all_tool_calls,
+            total_cost=total_cost,
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            model=primary_model,
+        )
+
         yield {
             "event": "final_response",
             "agent": "supervisor",
@@ -290,6 +449,8 @@ class AgentOrchestrator:
                 "message": final_response,
                 "agents_used": agents_used,
                 "cost_usd": total_cost,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
                 "status": "completed",
             },
         }

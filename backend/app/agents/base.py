@@ -202,6 +202,8 @@ class BaseAgent(ABC):
 
             elapsed_ms = int((time.monotonic() - start) * 1000)
             cost_usd = self._calculate_cost(response.usage)
+            input_tokens = int(getattr(response.usage, "input_tokens", 0) or 0)
+            output_tokens = int(getattr(response.usage, "output_tokens", 0) or 0)
 
             all_tool_calls = []
             text_content = ""
@@ -240,12 +242,16 @@ class BaseAgent(ABC):
                     tools=self.tools if self.tools else anthropic.NOT_GIVEN,
                 )
                 cost_usd += self._calculate_cost(response.usage)
+                input_tokens += int(getattr(response.usage, "input_tokens", 0) or 0)
+                output_tokens += int(getattr(response.usage, "output_tokens", 0) or 0)
 
             logger.info(
                 "Agent executed",
                 agent=self.name,
                 elapsed_ms=elapsed_ms,
                 cost_usd=cost_usd,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 tool_calls=len(tool_calls),
             )
 
@@ -254,6 +260,9 @@ class BaseAgent(ABC):
                 "response": text_content,
                 "tool_calls": all_tool_calls,
                 "cost_usd": cost_usd,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "model": self.model,
                 "elapsed_ms": elapsed_ms,
             }
 
@@ -264,6 +273,9 @@ class BaseAgent(ABC):
                 "response": f"Error: {str(e)}",
                 "tool_calls": [],
                 "cost_usd": 0.0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "model": self.model,
                 "elapsed_ms": int((time.monotonic() - start) * 1000),
             }
 
