@@ -50,12 +50,34 @@ const components: Components = {
   // ─── Code ─────────────────────────────────────────────
   code: ({ className, children, ...props }) => {
     const isBlock = className?.includes("language-");
+    const lang = className?.replace("language-", "");
+
+    // ASCII tree blocks get a dedicated "folder structure" style with
+    // whitespace-pre so Unicode box-drawing chars align correctly.
+    if (isBlock && lang === "tree") {
+      return (
+        <div className="my-3 rounded-lg overflow-hidden border border-border">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/50 border-b border-border">
+            <svg className="h-3 w-3 text-muted-foreground" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 4H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z" />
+            </svg>
+            <span className="text-[10px] font-mono text-muted-foreground">folder structure</span>
+          </div>
+          <pre className="p-3 overflow-x-auto bg-muted/20 whitespace-pre leading-relaxed">
+            <code className="text-xs font-mono text-foreground" {...props}>
+              {children}
+            </code>
+          </pre>
+        </div>
+      );
+    }
+
     if (isBlock) {
       return (
         <div className="my-3 rounded-lg overflow-hidden border border-border">
           <div className="flex items-center px-3 py-1.5 bg-muted/50 border-b border-border">
             <span className="text-[10px] font-mono text-muted-foreground">
-              {className?.replace("language-", "") || "code"}
+              {lang || "code"}
             </span>
           </div>
           <pre className="p-3 overflow-x-auto bg-muted/20">

@@ -90,6 +90,25 @@ Rules:
   next step. Don't chain unrelated operations with `&&` — make multiple calls.
 - The session has a persistent working directory: `cd subdir` in one call
   affects the next call's `ls`.
+
+## Output formatting
+
+When displaying file or folder structures, ALWAYS render them as ASCII
+trees inside a ```tree fenced code block using Unicode box-drawing
+characters. Never output flat JSON file lists or plain comma-separated
+paths to the user. Example:
+
+```tree
+project/
+├── src/
+│   ├── components/
+│   │   ├── Header.tsx
+│   │   └── Footer.tsx
+│   └── utils/
+│       └── helpers.ts
+├── package.json
+└── README.md
+```
 """
 
 
