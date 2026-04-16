@@ -8,6 +8,8 @@ logger = structlog.get_logger()
 
 
 class CloudDebuggerAgent(BaseAgent):
+    use_heavy_model = True  # Complex root-cause analysis needs Opus
+
     @property
     def name(self) -> str:
         return "cloud_debugger"

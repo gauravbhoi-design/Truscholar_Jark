@@ -145,7 +145,9 @@ class BaseAgent(ABC):
     - Hook support for safety gates
     - A shared `run_shell` CLI fallback alongside its specialized MCP tools
 
-    Uses Claude Opus 4.6 via GCP Vertex AI by default.
+    Uses tiered Claude models via GCP Vertex AI:
+    - Opus 4.6 for complex analysis (agents that set use_heavy_model = True)
+    - Sonnet 4.6 for routing, tool execution, and synthesis (default)
 
     Subclasses should override `mcp_tools` (not `tools`) to declare their
     specialized MCP tools. The base class composes those with the shared
@@ -156,10 +158,18 @@ class BaseAgent(ABC):
     # agent should be confined to structured tools only).
     enable_cli: bool = True
 
+    # Set to True on agents that need Opus-level reasoning (e.g. complex
+    # root-cause analysis). Default False → uses the cheaper light model.
+    use_heavy_model: bool = False
+
     def __init__(self):
         self.client = _create_client()
-        self.model = settings.claude_model
-        self.max_tokens = settings.claude_max_tokens
+        if self.use_heavy_model:
+            self.model = settings.claude_model  # Opus
+            self.max_tokens = settings.claude_max_tokens
+        else:
+            self.model = settings.claude_light_model  # Sonnet
+            self.max_tokens = settings.claude_light_max_tokens
 
     @property
     @abstractmethod
@@ -226,7 +236,7 @@ class BaseAgent(ABC):
 
             all_tool_calls = []
             text_content = ""
-            max_iterations = 10  # Safety limit to prevent infinite loops
+            max_iterations = 5  # Safety limit to prevent runaway costs
 
             # Agentic loop: keep running until Claude stops requesting tools
             for _ in range(max_iterations):
@@ -597,13 +607,17 @@ Each step should map to exactly one tool call."""
             timeout=min(int(tool_input.get("timeout", 30)), 120),
         )
 
-    def _calculate_cost(self, usage) -> float:
-        """Calculate API cost from token usage.
+    # Vertex AI pricing per 1M tokens (input, output)
+    MODEL_PRICING: dict[str, tuple[float, float]] = {
+        "claude-opus-4-6": (15.0, 75.0),
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-haiku-4-5-20251001": (0.80, 4.0),
+    }
 
-        Opus 4.6 pricing via Vertex AI:
-        - Input: $15 / 1M tokens
-        - Output: $75 / 1M tokens
-        """
-        input_cost = (usage.input_tokens / 1_000_000) * 15.0
-        output_cost = (usage.output_tokens / 1_000_000) * 75.0
+    def _calculate_cost(self, usage, model: str | None = None) -> float:
+        """Calculate API cost from token usage based on the model used."""
+        m = model or self.model
+        input_rate, output_rate = self.MODEL_PRICING.get(m, (3.0, 15.0))
+        input_cost = (usage.input_tokens / 1_000_000) * input_rate
+        output_cost = (usage.output_tokens / 1_000_000) * output_rate
         return round(input_cost + output_cost, 6)

@@ -42,8 +42,10 @@ class Settings(BaseSettings):
 
     # ─── Claude / Anthropic via Vertex AI ──────────────────────────────
     anthropic_api_key: str = ""  # Only needed for direct Anthropic API
-    claude_model: str = "claude-opus-4-6"  # Vertex AI model ID for Opus 4.6
+    claude_model: str = "claude-opus-4-6"  # Heavy model for complex analysis
+    claude_light_model: str = "claude-sonnet-4-6"  # Light model for routing, tools, synthesis
     claude_max_tokens: int = 8192
+    claude_light_max_tokens: int = 4096  # Lower limit for light model tasks
     max_budget_usd: float = 5.0  # Per-session cost cap
     use_vertex_ai: bool = True  # Use GCP Vertex AI instead of direct Anthropic API
     vertex_region: str = "us-east5"  # Vertex AI region with Claude support

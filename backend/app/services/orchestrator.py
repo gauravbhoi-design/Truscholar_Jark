@@ -1,5 +1,6 @@
 """Agent Orchestrator — Supervisor that routes queries to specialized agents."""
 
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -246,22 +247,51 @@ class AgentOrchestrator:
             primary_model: str | None = None
             all_tool_calls = []
 
-            # Execute agents (parallel for independent agents)
-            for agent_name in routing.agents:
-                agent = self.agents.get(agent_name)
-                if not agent:
-                    continue
+            # Resolve which agents to invoke
+            valid_agents = [
+                (agent_name, self.agents[agent_name])
+                for agent_name in routing.agents
+                if agent_name in self.agents
+            ]
 
-                logger.info("Invoking agent", agent=agent_name.value, query=query[:100])
-                result = await agent.execute(query=query, context=enriched_context, user=enriched_user)
-                results.append(result)
-                agents_used.append(agent_name.value)
-                total_cost += result.get("cost_usd", 0.0)
-                total_input_tokens += int(result.get("input_tokens", 0) or 0)
-                total_output_tokens += int(result.get("output_tokens", 0) or 0)
-                if primary_model is None:
-                    primary_model = result.get("model")
-                all_tool_calls.extend(result.get("tool_calls", []))
+            if routing.parallel and len(valid_agents) > 1:
+                # Parallel execution via asyncio.gather()
+                logger.info(
+                    "Executing agents in parallel",
+                    agents=[a.value for a, _ in valid_agents],
+                    query=query[:100],
+                )
+                coros = [
+                    agent.execute(query=query, context=enriched_context, user=enriched_user)
+                    for _, agent in valid_agents
+                ]
+                parallel_results = await asyncio.gather(*coros, return_exceptions=True)
+
+                for (agent_name, _agent), result in zip(valid_agents, parallel_results):
+                    if isinstance(result, Exception):
+                        logger.error("Agent failed in parallel", agent=agent_name.value, error=str(result))
+                        result = {"agent": agent_name.value, "response": f"Error: {result}", "tool_calls": [], "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "model": _agent.model}
+                    results.append(result)
+                    agents_used.append(agent_name.value)
+                    total_cost += result.get("cost_usd", 0.0)
+                    total_input_tokens += int(result.get("input_tokens", 0) or 0)
+                    total_output_tokens += int(result.get("output_tokens", 0) or 0)
+                    if primary_model is None:
+                        primary_model = result.get("model")
+                    all_tool_calls.extend(result.get("tool_calls", []))
+            else:
+                # Sequential execution (single agent or explicitly sequential)
+                for agent_name, agent in valid_agents:
+                    logger.info("Invoking agent", agent=agent_name.value, query=query[:100])
+                    result = await agent.execute(query=query, context=enriched_context, user=enriched_user)
+                    results.append(result)
+                    agents_used.append(agent_name.value)
+                    total_cost += result.get("cost_usd", 0.0)
+                    total_input_tokens += int(result.get("input_tokens", 0) or 0)
+                    total_output_tokens += int(result.get("output_tokens", 0) or 0)
+                    if primary_model is None:
+                        primary_model = result.get("model")
+                    all_tool_calls.extend(result.get("tool_calls", []))
 
             # Supervisor synthesizes final response
             final_response = await self.supervisor.synthesize(query, results)
@@ -382,16 +412,51 @@ class AgentOrchestrator:
         primary_model: str | None = None
         all_tool_calls: list[dict] = []
 
-        for agent_name in routing.agents:
-            agent = self.agents.get(agent_name)
-            if not agent:
-                continue
+        # Resolve valid agents
+        valid_agents = [
+            (agent_name, self.agents[agent_name])
+            for agent_name in routing.agents
+            if agent_name in self.agents
+        ]
 
-            yield {"event": "agent_start", "agent": agent_name.value, "data": {"message": f"Starting {agent_name.value}..."}}
-            agents_used.append(agent_name.value)
+        if routing.parallel and len(valid_agents) > 1:
+            # Parallel streaming: run agents concurrently, collect events via queue
+            event_queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
-            async for event in agent.execute_with_events(query=query, context=enriched_context, user=enriched_user):
-                # Collect the final result
+            async def _run_agent_to_queue(a_name: AgentName, a_agent, q: asyncio.Queue):
+                """Run one agent, push events into the shared queue."""
+                try:
+                    async for event in a_agent.execute_with_events(
+                        query=query, context=enriched_context, user=enriched_user
+                    ):
+                        await q.put(event)
+                except Exception as e:
+                    logger.error("Agent stream failed", agent=a_name.value, error=str(e))
+                    await q.put({
+                        "type": "agent_result",
+                        "agent": a_name.value,
+                        "data": {"agent": a_name.value, "response": f"Error: {e}", "tool_calls": [], "cost_usd": 0.0},
+                    })
+                finally:
+                    await q.put(None)  # Sentinel: this agent is done
+
+            # Emit start events and launch all agents
+            for agent_name, _agent in valid_agents:
+                yield {"event": "agent_start", "agent": agent_name.value, "data": {"message": f"Starting {agent_name.value}..."}}
+                agents_used.append(agent_name.value)
+
+            tasks = [
+                asyncio.create_task(_run_agent_to_queue(a_name, a_agent, event_queue))
+                for a_name, a_agent in valid_agents
+            ]
+
+            # Drain the queue until all agents finish (one None per agent)
+            done_count = 0
+            while done_count < len(valid_agents):
+                event = await event_queue.get()
+                if event is None:
+                    done_count += 1
+                    continue
                 if event["type"] == "agent_result":
                     results.append(event["data"])
                     total_cost += event["data"].get("cost_usd", 0.0)
@@ -401,8 +466,27 @@ class AgentOrchestrator:
                         primary_model = event["data"].get("model")
                     all_tool_calls.extend(event["data"].get("tool_calls", []))
                 else:
-                    # Forward all other events to the client
                     yield {"event": event["type"], "agent": event["agent"], "data": event["data"]}
+
+            # Ensure all tasks are done (they should be)
+            await asyncio.gather(*tasks, return_exceptions=True)
+        else:
+            # Sequential streaming (single agent or explicitly sequential)
+            for agent_name, agent in valid_agents:
+                yield {"event": "agent_start", "agent": agent_name.value, "data": {"message": f"Starting {agent_name.value}..."}}
+                agents_used.append(agent_name.value)
+
+                async for event in agent.execute_with_events(query=query, context=enriched_context, user=enriched_user):
+                    if event["type"] == "agent_result":
+                        results.append(event["data"])
+                        total_cost += event["data"].get("cost_usd", 0.0)
+                        total_input_tokens += int(event["data"].get("input_tokens", 0) or 0)
+                        total_output_tokens += int(event["data"].get("output_tokens", 0) or 0)
+                        if primary_model is None:
+                            primary_model = event["data"].get("model")
+                        all_tool_calls.extend(event["data"].get("tool_calls", []))
+                    else:
+                        yield {"event": event["type"], "agent": event["agent"], "data": event["data"]}
 
         # Synthesize final response
         yield {"event": "thinking", "agent": "supervisor", "data": {"message": "Synthesizing results..."}}

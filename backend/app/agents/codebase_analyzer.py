@@ -8,6 +8,8 @@ logger = structlog.get_logger()
 
 
 class CodebaseAnalyzerAgent(BaseAgent):
+    use_heavy_model = True  # Deep code analysis + security review needs Opus
+
     @property
     def name(self) -> str:
         return "codebase_analyzer"

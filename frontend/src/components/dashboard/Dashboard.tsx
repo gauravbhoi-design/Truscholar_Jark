@@ -14,6 +14,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { MetricsPanel } from "./MetricsPanel";
 import { AdminPanel } from "./AdminPanel";
 import { LogOut } from "lucide-react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface Props {
   user: AuthUser;
@@ -72,6 +73,7 @@ export default function Dashboard({ user }: Props) {
             )}
             <span className="text-sm font-medium">{user.name}</span>
             <span className="text-xs text-muted-foreground">@{user.login}</span>
+            <ThemeToggle />
             <button
               onClick={logout}
               className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"

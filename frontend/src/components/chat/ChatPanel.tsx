@@ -16,6 +16,9 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronRight,
+  Download,
+  FileText,
+  FileDown,
 } from "lucide-react";
 import { sendQueryStream, getGcpStatus, generatePlan, type StreamEvent, type PlanResponse } from "@/lib/api";
 import { publishAgentStatus } from "@/lib/agent-events";
@@ -269,6 +272,184 @@ function LiveActivity({ events }: { events: AgentEvent[] }) {
   }
 }
 
+// ─── Report Download ──────────────────────────────────────────────────
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadAsMarkdown(msg: Message) {
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+  const header = `# DevOps Co-Pilot Report\n\n**Date:** ${new Date().toLocaleString()}  \n**Agents:** ${(msg.agents || []).join(", ") || "N/A"}  \n**Cost:** $${msg.cost?.toFixed(4) ?? "N/A"}\n\n---\n\n`;
+  downloadBlob(header + msg.content, `copilot-report-${timestamp}.md`, "text/markdown");
+}
+
+function downloadAsPdf(msg: Message) {
+  const timestamp = new Date().toLocaleString();
+  const agents = (msg.agents || []).join(", ") || "N/A";
+
+  // Convert markdown to simple HTML for print (handles headings, lists, code, tables, bold, italic, links)
+  const htmlBody = markdownToHtml(msg.content);
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>DevOps Co-Pilot Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 24px; color: #1a1a1a; font-size: 14px; line-height: 1.6; }
+  .header { border-bottom: 2px solid #e5e7eb; padding-bottom: 16px; margin-bottom: 24px; }
+  .header h1 { margin: 0 0 8px; font-size: 22px; color: #111; }
+  .meta { font-size: 12px; color: #6b7280; }
+  .meta span { margin-right: 16px; }
+  h1 { font-size: 20px; margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h2 { font-size: 17px; margin-top: 24px; }
+  h3 { font-size: 15px; margin-top: 20px; }
+  pre { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12px; }
+  code { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; }
+  :not(pre)>code { background: #f3f4f6; padding: 2px 5px; border-radius: 3px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+  th { background: #f9fafb; font-weight: 600; }
+  blockquote { border-left: 3px solid #d1d5db; margin: 12px 0; padding-left: 12px; color: #6b7280; }
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+  a { color: #2563eb; }
+  @media print { body { padding: 0; } .no-print { display: none; } }
+</style></head><body>
+<div class="header">
+  <h1>DevOps Co-Pilot Report</h1>
+  <div class="meta">
+    <span><strong>Date:</strong> ${timestamp}</span>
+    <span><strong>Agents:</strong> ${agents}</span>
+    <span><strong>Cost:</strong> $${msg.cost?.toFixed(4) ?? "N/A"}</span>
+  </div>
+</div>
+${htmlBody}
+<script>window.onload=function(){window.print();}</script>
+</body></html>`;
+
+  const win = window.open("", "_blank");
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
+/** Lightweight markdown → HTML converter for the PDF print view. */
+function markdownToHtml(md: string): string {
+  let html = md;
+
+  // Code blocks (```lang ... ```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `<pre><code class="language-${lang}">${escaped}</code></pre>`;
+  });
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  // Tables (GFM)
+  html = html.replace(
+    /^(\|.+\|)\n(\|[\s:|-]+\|)\n((?:\|.+\|\n?)+)/gm,
+    (_m, headerRow: string, _sep: string, bodyRows: string) => {
+      const ths = headerRow.split("|").filter(Boolean).map((c: string) => `<th>${c.trim()}</th>`).join("");
+      const rows = bodyRows.trim().split("\n").map((row: string) => {
+        const tds = row.split("|").filter(Boolean).map((c: string) => `<td>${c.trim()}</td>`).join("");
+        return `<tr>${tds}</tr>`;
+      }).join("");
+      return `<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>`;
+    },
+  );
+
+  // Headings
+  html = html.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+
+  // Bold & italic
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Blockquotes
+  html = html.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
+
+  // Horizontal rules
+  html = html.replace(/^---+$/gm, "<hr>");
+
+  // Unordered lists
+  html = html.replace(/^(?:- (.+)\n?)+/gm, (block) => {
+    const items = block.trim().split("\n").map((l) => `<li>${l.replace(/^- /, "")}</li>`).join("");
+    return `<ul>${items}</ul>`;
+  });
+
+  // Ordered lists
+  html = html.replace(/^(?:\d+\. (.+)\n?)+/gm, (block) => {
+    const items = block.trim().split("\n").map((l) => `<li>${l.replace(/^\d+\. /, "")}</li>`).join("");
+    return `<ol>${items}</ol>`;
+  });
+
+  // Paragraphs (remaining bare lines)
+  html = html.replace(/^(?!<[a-z/])(.+)$/gm, "<p>$1</p>");
+
+  return html;
+}
+
+function DownloadButton({ msg }: { msg: Message }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={() => setOpen(!open)}
+        className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        title="Download report"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 bottom-full mb-1 z-50 w-44 rounded-lg border bg-popover shadow-lg py-1 animate-in fade-in-0 zoom-in-95">
+          <button
+            onClick={() => { downloadAsMarkdown(msg); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted transition-colors text-left"
+          >
+            <FileText className="h-3.5 w-3.5 text-blue-400" />
+            Download as Markdown
+          </button>
+          <button
+            onClick={() => { downloadAsPdf(msg); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted transition-colors text-left"
+          >
+            <FileDown className="h-3.5 w-3.5 text-red-400" />
+            Download as PDF
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -452,21 +633,24 @@ export function ChatPanel() {
                 <p className="text-sm">{msg.content}</p>
               )}
 
-              {msg.agents && msg.agents.length > 0 && (
-                <div className="mt-2 flex gap-1 flex-wrap">
-                  {msg.agents.map((agent) => (
-                    <span
-                      key={agent}
-                      className="px-2 py-0.5 text-xs rounded-full bg-secondary text-secondary-foreground"
-                    >
-                      {agent}
-                    </span>
-                  ))}
-                  {msg.cost !== undefined && (
-                    <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground">
-                      ${msg.cost.toFixed(4)}
-                    </span>
-                  )}
+              {msg.role === "assistant" && (msg.content || msg.plan) && (
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="flex gap-1 flex-wrap">
+                    {(msg.agents || []).map((agent) => (
+                      <span
+                        key={agent}
+                        className="px-2 py-0.5 text-xs rounded-full bg-secondary text-secondary-foreground"
+                      >
+                        {agent}
+                      </span>
+                    ))}
+                    {msg.cost !== undefined && (
+                      <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground">
+                        ${msg.cost.toFixed(4)}
+                      </span>
+                    )}
+                  </div>
+                  {msg.content && <DownloadButton msg={msg} />}
                 </div>
               )}
             </div>
