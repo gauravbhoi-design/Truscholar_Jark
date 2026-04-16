@@ -12,6 +12,8 @@ import {
   BarChart3,
   Gauge,
   ShieldCheck,
+  ScanLine,
+  Crosshair,
 } from "lucide-react";
 
 export type TabId =
@@ -19,6 +21,8 @@ export type TabId =
   | "chat"
   | "repos"
   | "metrics"
+  | "security"
+  | "pentest"
   | "agents"
   | "sprints"
   | "logs"
@@ -37,6 +41,8 @@ const baseNavItems = [
   { id: "chat" as const, label: "AI Chat", icon: MessageSquare },
   { id: "repos" as const, label: "Repositories", icon: GitBranch },
   { id: "metrics" as const, label: "Eng Metrics", icon: Gauge },
+  { id: "security" as const, label: "Security", icon: ScanLine },
+  { id: "pentest" as const, label: "Pentest", icon: Crosshair },
   { id: "sprints" as const, label: "Sprints", icon: BarChart3 },
   { id: "agents" as const, label: "Agents", icon: Bot },
   { id: "logs" as const, label: "Live Logs", icon: Radio },

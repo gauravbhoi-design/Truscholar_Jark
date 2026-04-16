@@ -12,6 +12,8 @@ import { SprintPanel } from "./SprintPanel";
 import { LiveLogViewer } from "./LiveLogViewer";
 import { SettingsPanel } from "./SettingsPanel";
 import { MetricsPanel } from "./MetricsPanel";
+import { SecurityPanel } from "./SecurityPanel";
+import { PentestPanel } from "./PentestPanel";
 import { AdminPanel } from "./AdminPanel";
 import { LogOut } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -97,6 +99,8 @@ export default function Dashboard({ user }: Props) {
             </div>
           )}
 
+          {activeTab === "security" && <SecurityPanel />}
+          {activeTab === "pentest" && <PentestPanel />}
           {activeTab === "agents" && <AgentStatusPanel />}
           {activeTab === "audit" && <AuditLogPanel />}
           {activeTab === "repos" && <RepoSelector />}

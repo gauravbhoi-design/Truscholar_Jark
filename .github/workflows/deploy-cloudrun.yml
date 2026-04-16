@@ -11,8 +11,10 @@ env:
   SA_EMAIL: claude-vscode-key@project-tai-aiinterviewer.iam.gserviceaccount.com
   API_IMAGE: us-central1-docker.pkg.dev/project-tai-aiinterviewer/copilot/api
   FRONTEND_IMAGE: us-central1-docker.pkg.dev/project-tai-aiinterviewer/copilot/frontend
+  KALI_IMAGE: us-central1-docker.pkg.dev/project-tai-aiinterviewer/copilot/kali-scanner
   API_SERVICE: copilot-api
   FRONTEND_SERVICE: copilot-frontend
+  KALI_SERVICE: copilot-kali-scanner
   # Cloud SQL
   DB_INSTANCE: copilot-db
   DB_NAME: devops_copilot
@@ -178,6 +180,15 @@ jobs:
           docker push ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           docker push ${{ env.FRONTEND_IMAGE }}:latest
 
+      - name: Build & Push Kali Scanner
+        run: |
+          docker build -f infra/docker/Dockerfile.kali-scanner \
+            -t ${{ env.KALI_IMAGE }}:${{ github.sha }} \
+            -t ${{ env.KALI_IMAGE }}:latest \
+            infra/docker/
+          docker push ${{ env.KALI_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.KALI_IMAGE }}:latest
+
   # ─── Step 3: Deploy API to Cloud Run ─────────────────────────────────
   deploy-api:
     name: Deploy API to Cloud Run
@@ -262,6 +273,7 @@ jobs:
           GITHUB_APP_CLIENT_SECRET=${{ secrets.GH_APP_CLIENT_SECRET }},\
           GITHUB_APP_WEBHOOK_SECRET=${{ secrets.GH_APP_WEBHOOK_SECRET }},\
           GITHUB_APP_PRIVATE_KEY_PATH=/github-app-secrets/private-key,\
+          KALI_SCANNER_URL=https://${{ env.KALI_SERVICE }}-${{ env.GCP_PROJECT_ID }}.${{ env.GCP_REGION }}.run.app,\
           ENABLE_API_DOCS=true,\
           DOCS_USERNAME=${{ secrets.DOCS_USERNAME }},\
           DOCS_PASSWORD=${{ secrets.DOCS_PASSWORD }}" \
@@ -278,7 +290,50 @@ jobs:
     outputs:
       api_url: ${{ steps.api-url.outputs.api_url }}
 
-  # ─── Step 4: Deploy Frontend to Cloud Run ────────────────────────────
+  # ─── Step 4: Deploy Kali Scanner to Cloud Run ─────────────────────────
+  deploy-kali:
+    name: Deploy Kali Scanner to Cloud Run
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Kali Scanner
+        run: |
+          gcloud run deploy ${{ env.KALI_SERVICE }} \
+            --image ${{ env.KALI_IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --port 8585 \
+            --memory 2Gi \
+            --cpu 2 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 600 \
+            --concurrency 5 \
+            --no-allow-unauthenticated \
+            --service-account ${{ env.SA_EMAIL }}
+
+      - name: Allow API to invoke Kali Scanner
+        run: |
+          gcloud run services add-iam-policy-binding ${{ env.KALI_SERVICE }} \
+            --region ${{ env.GCP_REGION }} \
+            --member="serviceAccount:${{ env.SA_EMAIL }}" \
+            --role="roles/run.invoker" --quiet
+
+      - name: Get Kali Scanner URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.KALI_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)')
+          echo "::notice::Kali Scanner deployed at: $URL"
+          echo "::notice::Health check: $URL/health"
+
+  # ─── Step 5: Deploy Frontend to Cloud Run ────────────────────────────
   deploy-frontend:
     name: Deploy Frontend to Cloud Run
     runs-on: ubuntu-latest

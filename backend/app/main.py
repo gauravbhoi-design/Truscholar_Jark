@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from prometheus_client import make_asgi_app
 
 from app.api.routes import router as api_router
+from app.api.security_routes import router as security_router
 from app.api.websocket import router as ws_router
 from app.config import get_settings
 from app.services.redis_service import RedisService
@@ -71,6 +72,13 @@ async def lifespan(app: FastAPI):
         logger.info("Database tables verified")
     except Exception as e:
         logger.error("Failed to create database tables", error=str(e))
+
+    # Ensure MongoDB indexes for pentest findings
+    try:
+        from app.services.pentest_store import ensure_indexes
+        ensure_indexes()
+    except Exception as e:
+        logger.warning("MongoDB pentest indexes skipped", error=str(e))
 
     app.state.redis = None
     try:
@@ -160,6 +168,7 @@ app.mount("/metrics", metrics_app)
 # ─── Routes ─────────────────────────────────────────────────────────────────
 
 app.include_router(api_router, prefix=settings.api_prefix)
+app.include_router(security_router, prefix=settings.api_prefix)
 app.include_router(ws_router, prefix=settings.api_prefix)
 
 

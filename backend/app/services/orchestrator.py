@@ -14,6 +14,7 @@ from app.agents.codebase_analyzer import CodebaseAnalyzerAgent
 from app.agents.commit_analyst import CommitAnalystAgent
 from app.agents.deployment_doctor import DeploymentDoctorAgent
 from app.agents.engineering_metrics import EngineeringMetricsAgent
+from app.agents.pentest import PentestAgent
 from app.agents.performance import PerformanceAgent
 from app.agents.supervisor import SupervisorAgent
 from app.config import get_settings
@@ -46,6 +47,7 @@ class AgentOrchestrator:
             AgentName.DEPLOYMENT_DOCTOR: DeploymentDoctorAgent(),
             AgentName.PERFORMANCE: PerformanceAgent(),
             AgentName.ENGINEERING_METRICS: EngineeringMetricsAgent(),
+            AgentName.PENTEST: PentestAgent(),
         }
         self.supervisor = SupervisorAgent(agents=self.agents)
         self.memory = MemoryService(db=db, user_id=user.get("sub", user.get("login", ""))) if db else None

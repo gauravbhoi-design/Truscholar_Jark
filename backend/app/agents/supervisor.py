@@ -44,6 +44,7 @@ Available agents:
 - commit_analyst: Analyzes commit history, diffs, identifies breaking changes and regressions
 - deployment_doctor: Validates Docker, K8s, Terraform, Helm configs; CI/CD pipeline analysis
 - performance: Monitors metrics, identifies bottlenecks, resource optimization
+- pentest: Runs real security scans (Nmap, Nikto, ZAP, SSLScan, Trivy, Subfinder) via Kali Linux container
 
 Routing rules:
 - Deployment failures → cloud_debugger + deployment_doctor (parallel)
@@ -55,6 +56,12 @@ Routing rules:
 - Log analysis → cloud_debugger
 - Code quality / security → codebase_analyzer
 - GCP service audit / list services → cloud_debugger
+- Penetration testing / security scan / port scan / vulnerability scan → pentest
+- SSL/TLS audit / certificate check → pentest
+- Subdomain enumeration / attack surface → pentest
+- Container image CVE scan → pentest
+- OWASP Top 10 / web app security → pentest
+- Full security audit → pentest + codebase_analyzer (parallel) — run scans + static analysis
 
 Always respond with JSON:
 {"agents": ["agent_name"], "reasoning": "why these agents", "parallel": true/false}"""
@@ -123,6 +130,13 @@ Always respond with JSON:
                 agents.append(AgentName.CODEBASE_ANALYZER)
             if any(kw in query_lower for kw in ["slow", "latency", "cpu", "memory", "performance"]):
                 agents.append(AgentName.PERFORMANCE)
+
+        if any(kw in query_lower for kw in [
+            "pentest", "penetration", "scan", "nmap", "nikto", "zap", "sslscan",
+            "trivy", "subdomain", "port scan", "vulnerability scan", "security scan",
+            "ssl check", "tls", "owasp", "attack surface", "cve scan", "container scan",
+        ]):
+            agents.append(AgentName.PENTEST)
 
         if not agents:
             agents = [AgentName.CLOUD_DEBUGGER]  # Default

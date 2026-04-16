@@ -20,6 +20,7 @@ class AgentName(str, Enum):
     DEPLOYMENT_DOCTOR = "deployment_doctor"
     PERFORMANCE = "performance"
     ENGINEERING_METRICS = "engineering_metrics"
+    PENTEST = "pentest"
 
 
 class AgentStatus(str, Enum):
